@@ -5,7 +5,7 @@ using System.Timers;
 
 namespace IOTLinkAPI.Common
 {
-    public class CacheContainer<TKey, TValue>
+    public class CacheContainer<TKey, TValue> : IDisposable
     {
         private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(5);
 
@@ -33,6 +33,11 @@ namespace IOTLinkAPI.Common
         internal CacheContainer(Func<DateTime> utcNow)
         {
             _utcNow = utcNow;
+        }
+
+        public void Dispose()
+        {
+            _cleanupTimer?.Dispose();
         }
 
         internal int RemoveExpiredItems()

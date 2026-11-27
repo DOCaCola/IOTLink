@@ -26,15 +26,16 @@ namespace IOTLinkAddon.Service
         private static readonly string PAYLOAD_ON = "ON";
         private static readonly string PAYLOAD_OFF = "OFF";
 
+        private readonly object _configurationLock = new object();
         private string _configPath;
         private Configuration _config;
 
-        private List<ProcessMonitor> _monitors = new List<ProcessMonitor>();
+        private volatile List<ProcessMonitor> _monitors = new List<ProcessMonitor>();
 
         private Timer _monitorTimer;
         private uint _monitorCounter = 0;
 
-        private Dictionary<string, string> _cache = new Dictionary<string, string>();
+        private readonly Dictionary<string, string> _cache = new Dictionary<string, string>();
 
         public override void Init(IAddonManager addonManager)
         {
@@ -44,7 +45,7 @@ namespace IOTLinkAddon.Service
 
             var cfgManager = ConfigurationManager.GetInstance();
             _configPath = Path.Combine(_currentPath, "config.yaml");
-            _config = cfgManager.GetConfiguration(_configPath);
+            cfgManager.GetConfiguration(_configPath);
             cfgManager.SetReloadHandler(_configPath, OnConfigReload);
 
             OnConfigReloadHandler += OnConfigReload;
@@ -59,30 +60,35 @@ namespace IOTLinkAddon.Service
             LoggerHelper.Verbose("ProcessMonitorService::Init() - Completed");
         }
 
-        private bool IsAddonEnabled()
-        {
-            if (_config == null || !_config.GetValue("enabled", false))
-            {
-                CleanTimers();
-                return false;
-            }
-
-            return true;
-        }
-
         private void Restart()
         {
-            if (!IsAddonEnabled())
-                return;
-
-            SetupMonitors();
-            StartTimers();
+            lock (_configurationLock)
+                ApplyConfiguration(ConfigurationManager.GetInstance().GetConfiguration(_configPath));
         }
 
-        private void ClearMonitors()
+        internal void ApplyConfiguration(Configuration configuration)
         {
-            _cache.Clear();
-            _monitors.Clear();
+            _config = configuration;
+            _monitors = MonitorConfig.GetEnabledMonitors(_config)
+                .Select(config => new ProcessMonitor { Name = config.Key, Config = config }).ToList();
+            lock (_cache)
+                _cache.Clear();
+            ProcessEventManager.GetInstance().SetMonitoringEnabled(_monitors.Count > 0);
+            CleanTimers();
+            if (_monitors.Count > 0)
+                StartTimers();
+
+            foreach (var monitor in _monitors)
+            {
+                try
+                {
+                    SetupDiscovery(monitor);
+                }
+                catch (Exception ex)
+                {
+                    LoggerHelper.Error("ProcessMonitorService::SetupDiscovery({0}): {1}", monitor.Name, ex);
+                }
+            }
         }
 
         private void SetupEventMonitor()
@@ -93,64 +99,11 @@ namespace IOTLinkAddon.Service
             eventMonitor.OnProcessStopped += OnProcessStopped;
         }
 
-        private void SetupMonitors()
+        private void SetupDiscovery(ProcessMonitor monitor)
         {
-            ClearMonitors();
-
-            List<Configuration> monitorConfigurations = _config.GetConfigurationList("monitors");
-            if (monitorConfigurations == null || monitorConfigurations.Count == 0)
-            {
-                LoggerHelper.Info("ProcessMonitorService::SetupMonitors() - Monitoring list is empty.");
-                return;
-            }
-
-            foreach (Configuration monitorConfiguration in monitorConfigurations)
-            {
-                try
-                {
-                    SetupMonitor(monitorConfiguration);
-                    SetupDiscovery(monitorConfiguration.Key);
-                }
-                catch (Exception ex)
-                {
-                    LoggerHelper.Debug("ProcessMonitorService::SetupMonitors({0}): Error - {1}", monitorConfiguration.Key, ex);
-                }
-            }
-        }
-
-        private void SetupMonitor(Configuration monitorConfiguration)
-        {
-            MonitorConfig config = MonitorConfig.FromConfiguration(monitorConfiguration);
-            if (!config.General.Enabled)
-            {
-                LoggerHelper.Debug("ProcessMonitorService::SetupMonitor({0}) - Monitoring is disabled.", monitorConfiguration.Key);
-                return;
-            }
-
-            ProcessMonitor monitor = new ProcessMonitor { Name = config.Key, Config = config };
-            bool hasMonitor = MonitorHelper.GetProcessMonitorByName(_monitors, monitor.Name) != null;
-            if (hasMonitor)
-            {
-                LoggerHelper.Warn("ProcessMonitorService::SetupMonitor({0}) - Duplicated Key. Ignoring.", monitorConfiguration.Key);
-                return;
-            }
-
-            _monitors.Add(monitor);
-        }
-
-        private void SetupDiscovery(string monitorName)
-        {
-            ProcessMonitor monitor = MonitorHelper.GetProcessMonitorByName(_monitors, monitorName);
-
-            if (monitor == null || !monitor.Config.General.Enabled)
-            {
-                LoggerHelper.Debug("ProcessMonitorService::SetupMonitor({0}) - Monitoring not found or disabled.", monitorName);
-                return;
-            }
-
             if (!monitor.Config.General.Discoverable)
             {
-                LoggerHelper.Debug("ProcessMonitorService::SetupDiscovery({0}) - Discovery is disabled.", monitorName);
+                LoggerHelper.Debug("ProcessMonitorService::SetupDiscovery({0}) - Discovery is disabled.", monitor.Name);
                 return;
             }
 
@@ -272,18 +225,13 @@ namespace IOTLinkAddon.Service
         {
             if (_monitorTimer != null)
             {
-                _monitorTimer.Stop();
+                _monitorTimer.Dispose();
                 _monitorTimer = null;
             }
         }
 
         private void StartTimers()
         {
-            if (!IsAddonEnabled())
-                return;
-
-            CleanTimers();
-
             _monitorTimer = new Timer();
             _monitorTimer.Elapsed += new ElapsedEventHandler(OnMonitorTimerElapsed);
             _monitorTimer.Interval = 1000;
@@ -309,24 +257,25 @@ namespace IOTLinkAddon.Service
 
         private void OnMQTTConnected(object sender, EventArgs e)
         {
-            if (!IsAddonEnabled())
-                return;
-
-            SetupMonitors();
-            StartTimers();
+            Restart();
         }
 
         private void OnMQTTDisconnected(object sender, EventArgs e)
         {
-            StopTimers();
+            lock (_configurationLock)
+                StopTimers();
         }
 
         private void OnClearEvent(object sender, EventArgs e)
         {
             LoggerHelper.Verbose("ProcessMonitorService::OnClearEvent() - Clearing cache and resending information.");
 
-            _cache.Clear();
-            ExecuteMonitors();
+            lock (_configurationLock)
+            {
+                lock (_cache)
+                    _cache.Clear();
+                ExecuteMonitors();
+            }
         }
 
         private void OnConfigReload(object sender, ConfigReloadEventArgs e)
@@ -336,7 +285,6 @@ namespace IOTLinkAddon.Service
 
             LoggerHelper.Verbose("ProcessMonitorService::OnConfigReload() - Reloading configuration");
 
-            _config = ConfigurationManager.GetInstance().GetConfiguration(_configPath);
             Restart();
         }
 
@@ -344,10 +292,15 @@ namespace IOTLinkAddon.Service
         {
             LoggerHelper.Verbose("ProcessMonitorService::OnMonitorTimerElapsed() - Started");
 
-            ExecuteMonitors();
+            lock (_configurationLock)
+            {
+                if (source != _monitorTimer)
+                    return;
 
-            if (_monitorCounter++ == uint.MaxValue)
-                _monitorCounter = 0;
+                ExecuteMonitors();
+                if (_monitorCounter++ == uint.MaxValue)
+                    _monitorCounter = 0;
+            }
 
             LoggerHelper.Verbose("ProcessMonitorService::OnMonitorTimerElapsed() - Completed");
         }
@@ -642,10 +595,13 @@ namespace IOTLinkAddon.Service
 
             if (monitor.Config.General.Cacheable)
             {
-                if (_cache.ContainsKey(topic) && _cache[topic].CompareTo(value) == 0)
-                    return;
+                lock (_cache)
+                {
+                    if (_cache.TryGetValue(topic, out var previous) && previous == value)
+                        return;
 
-                _cache[topic] = value;
+                    _cache[topic] = value;
+                }
             }
 
             GetManager().PublishMessage(this, topic, value);

@@ -1,23 +1,76 @@
-﻿using IOTLinkAddon.Common;
-using IOTLinkAddon.Common.Helpers;
-using IOTLinkAddon.Common.Processes;
-using IOTLinkAPI.Addons;
+﻿using IOTLinkAPI.Addons;
+using IOTLinkAPI.Configs;
 using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.Events;
 using IOTLinkAPI.Platform.Windows;
-using System;
+using IOTLinkAddon.Common.Configs;
+using IOTLinkAddon.Common.Helpers;
+using IOTLinkAddon.Common.Processes;
+using IOTLinkAddon.Common;
 using System.Collections.Generic;
 using System.Dynamic;
+using System.IO;
 using System.Linq;
+using System;
 
 namespace IOTLinkAddon.Agent
 {
-    public class ProcessMonitorAgent : AgentAddon
+    public class ProcessMonitorAgent : AgentAddon, IDisposable
     {
+        private readonly object _configurationLock = new object();
+        private string _configPath;
+        private bool _disposed;
+
         public override void Init(IAddonManager addonManager)
         {
             base.Init(addonManager);
-            OnAgentRequestHandler += OnAgentRequest;
+            _configPath = Path.Combine(_currentPath, "config.yaml");
+            var configs = ConfigurationManager.GetInstance();
+            configs.GetConfiguration(_configPath);
+            configs.SetReloadHandler(_configPath, OnConfigReload);
+            try
+            {
+                UpdateMonitoring();
+                OnAgentRequestHandler += OnAgentRequest;
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        private void OnConfigReload(object sender, ConfigReloadEventArgs e)
+        {
+            UpdateMonitoring();
+        }
+
+        private void UpdateMonitoring()
+        {
+            lock (_configurationLock)
+            {
+                if (_disposed)
+                    return;
+
+                var config = ConfigurationManager.GetInstance().GetConfiguration(_configPath);
+                ProcessEventManager.GetInstance().SetMonitoringEnabled(MonitorConfig.GetEnabledMonitors(config).Count > 0);
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_configurationLock)
+            {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+                if (_configPath != null)
+                {
+                    ConfigurationManager.GetInstance().RemoveReloadHandler(_configPath, OnConfigReload);
+                    ProcessEventManager.GetInstance().SetMonitoringEnabled(false);
+                }
+            }
         }
 
         private void OnAgentRequest(object sender, AgentAddonRequestEventArgs e)

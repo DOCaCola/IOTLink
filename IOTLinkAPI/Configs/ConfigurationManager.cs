@@ -62,6 +62,12 @@ namespace IOTLinkAPI.Configs
             SetReloadHandler(path, configReloadedHandler, ConfigType.CONFIGURATION_ADDON);
         }
 
+        public void RemoveReloadHandler(string path, ConfigReloadedHandler configReloadedHandler)
+        {
+            if (_configs.TryGetValue(Path.GetFullPath(path), out var configInfo))
+                configInfo.OnConfigReloadHandler -= configReloadedHandler;
+        }
+
         /// <summary>
         /// Set the handler for handling the reload configuration event.
         /// </summary>
@@ -187,13 +193,20 @@ namespace IOTLinkAPI.Configs
                 return;
             }
 
-            try
+            var watched = _configs[path];
+            lock (watched)
             {
-                // Disable Watcher
-                _configs[path].FileSystemWatcher.EnableRaisingEvents = false;
-
-                // This is needed on slow machines which file handlers can take longer to release.
-                Thread.Sleep(3000);
+                // Coalesce writes while the editor finishes saving. Watch again before reading
+                // so an edit during parsing or a long-running reload handler is queued.
+                watched.FileSystemWatcher.EnableRaisingEvents = false;
+                try
+                {
+                    Thread.Sleep(3000);
+                }
+                finally
+                {
+                    watched.FileSystemWatcher.EnableRaisingEvents = true;
+                }
 
                 ConfigInfo configInfo = GetConfiguration(path, true);
                 if (configInfo == null)
@@ -208,11 +221,6 @@ namespace IOTLinkAPI.Configs
                     FilePath = path,
                     ConfigType = configInfo.ConfigType
                 });
-            }
-            finally
-            {
-                // Enable Watcher
-                _configs[path].FileSystemWatcher.EnableRaisingEvents = true;
             }
         }
     }

@@ -1,7 +1,6 @@
 ﻿using IOTLinkAPI.Common;
 using IOTLinkAPI.Platform.Events.Process;
 using System;
-using System.Diagnostics;
 using System.Management;
 
 using static IOTLinkAPI.Platform.Events.Process.ProcessHandlers;
@@ -18,12 +17,13 @@ namespace IOTLinkAPI.Platform.Windows
         private static readonly int WMI_INTERVAL_PROCESS_STATE = 1;
         private static readonly string WMI_QUERY_PROCESS_STATE = "SELECT * FROM __InstanceOperationEvent WITHIN {0} WHERE TargetInstance ISA 'Win32_Process'";
 
-        private static ProcessEventManager _instance;
+        private static readonly ProcessEventManager Instance = new ProcessEventManager();
+        private readonly object _watcherLock = new object();
 
         private ManagementEventWatcher _processPerformanceWatcher;
         private ManagementEventWatcher _processStateWatcher;
 
-        private CacheContainer<int, ProcessInfoEntry> _cache = new CacheContainer<int, ProcessInfoEntry>();
+        private volatile CacheContainer<int, ProcessInfoEntry> _cache;
 
         public event ProcessStartedEventHandler OnProcessStarted;
         public event ProcessStoppedEventHandler OnProcessStopped;
@@ -31,58 +31,88 @@ namespace IOTLinkAPI.Platform.Windows
 
         public static ProcessEventManager GetInstance()
         {
-            if (_instance == null)
-                _instance = new ProcessEventManager();
-
-            return _instance;
+            return Instance;
         }
 
-        private ProcessEventManager()
-        {
-            Init();
-        }
+        private ProcessEventManager() { }
 
         public ProcessInfo GetProcessInfo(int processId)
         {
-            var entry = _cache.GetItem(processId);
-            if (entry == null)
-                return null;
-
-            return entry.ProcessInfo;
+            return _cache?.GetItem(processId)?.ProcessInfo;
         }
 
-        private void Init()
+        internal bool IsMonitoring => _cache != null;
+
+        public void SetMonitoringEnabled(bool enabled)
         {
-            if (_processPerformanceWatcher == null)
+            lock (_watcherLock)
             {
-                _processPerformanceWatcher = new ManagementEventWatcher(WMI_SCOPE, string.Format(WMI_QUERY_PROCESS_PERF, WMI_INTERVAL_PROCESS_PERF));
-                _processPerformanceWatcher.EventArrived += new EventArrivedEventHandler(OnProcessPerformanceWatcherEvent);
-            }
+                if (enabled == IsMonitoring)
+                    return;
 
-            if (_processStateWatcher == null)
-            {
-                _processStateWatcher = new ManagementEventWatcher(WMI_SCOPE, string.Format(WMI_QUERY_PROCESS_STATE, WMI_INTERVAL_PROCESS_STATE));
-                _processStateWatcher.EventArrived += new EventArrivedEventHandler(OnProcessStateWatcherEvent);
-            }
+                if (!enabled)
+                {
+                    StopWatchers();
+                    return;
+                }
 
-            _processPerformanceWatcher.Start();
-            _processStateWatcher.Start();
+                // Each subscription writes only to its own cache, including callbacks already in flight at stop.
+                var cache = new CacheContainer<int, ProcessInfoEntry>();
+                _cache = cache;
+                try
+                {
+                    _processStateWatcher = new ManagementEventWatcher(WMI_SCOPE, string.Format(WMI_QUERY_PROCESS_STATE, WMI_INTERVAL_PROCESS_STATE));
+                    _processStateWatcher.EventArrived += (sender, e) => OnProcessStateWatcherEvent(cache, e);
+                    _processStateWatcher.Start();
+
+                    _processPerformanceWatcher = new ManagementEventWatcher(WMI_SCOPE, string.Format(WMI_QUERY_PROCESS_PERF, WMI_INTERVAL_PROCESS_PERF));
+                    _processPerformanceWatcher.EventArrived += (sender, e) => OnProcessPerformanceWatcherEvent(cache, e);
+                    _processPerformanceWatcher.Start();
+                }
+                catch
+                {
+                    StopWatchers();
+                    throw;
+                }
+            }
         }
 
-        private void OnProcessPerformanceWatcherEvent(object sender, EventArrivedEventArgs e)
+        private void StopWatchers()
         {
-            if (e.NewEvent.Properties.Count == 0)
+            var cache = _cache;
+            _cache = null;
+            cache.Dispose();
+            try
+            {
+                StopWatcher(ref _processPerformanceWatcher);
+            }
+            finally
+            {
+                StopWatcher(ref _processStateWatcher);
+            }
+        }
+
+        private static void StopWatcher(ref ManagementEventWatcher watcher)
+        {
+            using (var current = watcher)
+            {
+                watcher = null;
+                current?.Stop();
+            }
+        }
+
+        private void OnProcessPerformanceWatcherEvent(CacheContainer<int, ProcessInfoEntry> cache, EventArrivedEventArgs e)
+        {
+            if (cache != _cache || e.NewEvent.Properties.Count == 0)
                 return;
 
             var targetInstance = (ManagementBaseObject)e.NewEvent["TargetInstance"];
             var processId = Convert.ToInt32((uint)targetInstance["IDProcess"]);
 
-            var processEntry = _cache.GetItem(processId);
+            var processEntry = cache.GetItem(processId);
             if (processEntry != null)
             {
-                var processName = (string)targetInstance["Name"];
-                processEntry.ProcessInfo.ProcessorUsage = GetProcessorUsage(Convert.ToInt32(targetInstance["PercentProcessorTime"]));
-                processEntry.ProcessInfo.MemoryUsed = GetMemoryUsed(processName);
+                ApplyPerformanceSample(processEntry.ProcessInfo, targetInstance);
 
                 var eventArgs = new ProcessEventArgs { ProcessInfo = processEntry.ProcessInfo };
                 if (!processEntry.Initialized)
@@ -91,48 +121,48 @@ namespace IOTLinkAPI.Platform.Windows
                     OnProcessUpdated?.Invoke(this, eventArgs);
 
                 processEntry.Initialized = true;
-                _cache.UpdateItem(processId, processEntry);
+                cache.UpdateItem(processId, processEntry);
             }
         }
 
-        private void OnProcessStateWatcherEvent(object sender, EventArrivedEventArgs e)
+        private void OnProcessStateWatcherEvent(CacheContainer<int, ProcessInfoEntry> cache, EventArrivedEventArgs e)
         {
-            if (e.NewEvent.Properties.Count == 0)
+            if (cache != _cache || e.NewEvent.Properties.Count == 0)
                 return;
 
             var className = e.NewEvent.ClassPath.ClassName;
             var targetInstance = (ManagementBaseObject)e.NewEvent["TargetInstance"];
 
             if (className.Contains("InstanceCreationEvent"))
-                OnProcessStartEvent(targetInstance);
+                OnProcessStartEvent(cache, targetInstance);
             else if (className.Contains("InstanceDeletionEvent"))
-                OnProcessStopEvent(targetInstance);
+                OnProcessStopEvent(cache, targetInstance);
             else
-                OnProcessUpdateEvent(targetInstance);
+                OnProcessUpdateEvent(cache, targetInstance);
         }
 
-        private void OnProcessStartEvent(ManagementBaseObject targetInstance)
+        private void OnProcessStartEvent(CacheContainer<int, ProcessInfoEntry> cache, ManagementBaseObject targetInstance)
         {
             var processId = Convert.ToInt32((uint)targetInstance["ProcessId"]);
 
-            _cache.UpdateItem(processId, new ProcessInfoEntry { ProcessInfo = ParseProcessInformation(targetInstance) });
+            cache.UpdateItem(processId, new ProcessInfoEntry { ProcessInfo = ParseProcessInformation(targetInstance) });
         }
 
-        private void OnProcessStopEvent(ManagementBaseObject targetInstance)
+        private void OnProcessStopEvent(CacheContainer<int, ProcessInfoEntry> cache, ManagementBaseObject targetInstance)
         {
             var processInfo = ParseProcessInformation(targetInstance);
 
-            _cache.RemoveKey(processInfo.Id);
+            cache.RemoveKey(processInfo.Id);
 
             var eventArgs = new ProcessEventArgs { ProcessInfo = processInfo };
             OnProcessStopped?.Invoke(this, eventArgs);
         }
 
-        private void OnProcessUpdateEvent(ManagementBaseObject targetInstance)
+        private void OnProcessUpdateEvent(CacheContainer<int, ProcessInfoEntry> cache, ManagementBaseObject targetInstance)
         {
             var processId = Convert.ToInt32((uint)targetInstance["ProcessId"]);
 
-            _cache.GetItem(processId, () => new ProcessInfoEntry { ProcessInfo = ParseProcessInformation(targetInstance) });
+            cache.GetItem(processId, () => new ProcessInfoEntry { ProcessInfo = ParseProcessInformation(targetInstance) });
         }
 
         private ProcessInfo ParseProcessInformation(ManagementBaseObject targetInstance)
@@ -147,21 +177,11 @@ namespace IOTLinkAPI.Platform.Windows
             };
         }
 
-        private long GetMemoryUsed(string processName)
+        internal static void ApplyPerformanceSample(ProcessInfo process, ManagementBaseObject sample)
         {
-            long memoryUsed = 0;
-            using (PerformanceCounter PC = new PerformanceCounter("Process", "Working Set - Private", processName))
-            {
-                memoryUsed = Convert.ToInt64(PC.NextValue());
-                PC.Close();
-            }
-
-            return memoryUsed;
-        }
-
-        private double GetProcessorUsage(int processorTime)
-        {
-            return Math.Round((processorTime / (double)Environment.ProcessorCount), 2);
+            var processorTime = Convert.ToDouble(sample["PercentProcessorTime"]);
+            process.ProcessorUsage = Math.Round(processorTime / Environment.ProcessorCount, 2);
+            process.MemoryUsed = Convert.ToInt64(sample["WorkingSetPrivate"]);
         }
 
         private string ParseProcessName(string processName)

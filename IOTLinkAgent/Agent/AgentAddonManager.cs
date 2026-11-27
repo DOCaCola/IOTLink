@@ -117,6 +117,9 @@ namespace IOTLinkAgent.Agent
         /// </summary>
         internal void LoadAddons()
         {
+            foreach (var addon in _addons.Values)
+                (addon.AgentAddon as IDisposable)?.Dispose();
+
             _addons.Clear();
             LoadInternalAddons();
 
