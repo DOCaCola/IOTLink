@@ -4,6 +4,7 @@ using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform;
 using IOTLinkAPI.Platform.HomeAssistant;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace IOTLinkAddon.Service.Monitors
 {
@@ -84,6 +85,86 @@ namespace IOTLinkAddon.Service.Monitors
                         Name = $"Screen #{item.InstanceId} - Height",
                         Component = HomeAssistantComponent.Sensor,
                         Icon = "mdi:monitor"
+                    }
+                });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/SignalWidth",
+                    Value = displayInfo.SignalWidth?.ToString(CultureInfo.InvariantCulture) ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_SignalWidth",
+                        Name = $"Screen #{item.InstanceId} - Signal Width",
+                        Component = HomeAssistantComponent.Sensor,
+                        Unit = "px",
+                        Icon = "mdi:monitor"
+                    }
+                });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/SignalHeight",
+                    Value = displayInfo.SignalHeight?.ToString(CultureInfo.InvariantCulture) ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_SignalHeight",
+                        Name = $"Screen #{item.InstanceId} - Signal Height",
+                        Component = HomeAssistantComponent.Sensor,
+                        Unit = "px",
+                        Icon = "mdi:monitor"
+                    }
+                });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/MonitorName",
+                    Value = displayInfo.MonitorName ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_MonitorName",
+                        Name = $"Screen #{item.InstanceId} - Monitor Name",
+                        Component = HomeAssistantComponent.Sensor,
+                        Icon = "mdi:monitor"
+                    }
+                });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/RefreshRate",
+                    Value = displayInfo.RefreshRate?.ToString("0.###", CultureInfo.InvariantCulture) ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_RefreshRate",
+                        Name = $"Screen #{item.InstanceId} - Refresh Rate",
+                        Component = HomeAssistantComponent.Sensor,
+                        Unit = "Hz",
+                        Icon = "mdi:monitor"
+                    }
+                });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/HdrEnabled",
+                    Value = displayInfo.HdrEnabled?.ToString() ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_HdrEnabled",
+                        Name = $"Screen #{item.InstanceId} - HDR Enabled",
+                        Component = HomeAssistantComponent.BinarySensor,
+                        PayloadOn = "True",
+                        PayloadOff = "False",
+                        Icon = "mdi:hdr"
                     }
                 });
             }

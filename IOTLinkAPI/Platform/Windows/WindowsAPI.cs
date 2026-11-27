@@ -500,16 +500,27 @@ namespace IOTLinkAPI.Platform.Windows
 
         public static List<DisplayInfo> GetDisplays()
         {
+            using (var reader = new WindowsDisplayReader())
+                return reader.Read();
+        }
+
+        internal static List<DisplayInfo> GetDisplays(Func<Dictionary<string, bool?>> readOutputColors)
+        {
             List<DisplayInfo> displays = new List<DisplayInfo>();
+            var modes = DisplayConfiguration.ReadActiveModes(readOutputColors);
             User32.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, delegate (IntPtr hMonitor, IntPtr hdcMonitor, ref Rect lprcMonitor, IntPtr dwData)
             {
                 MonitorInfoEx mi = new MonitorInfoEx();
                 mi.Size = MonitorInfoEx.SizeOf;
                 if (User32.GetMonitorInfo(hMonitor, ref mi))
                 {
-                    DisplayInfo di = new DisplayInfo();
-                    di.ScreenWidth = (mi.Monitor.Right - mi.Monitor.Left);
-                    di.ScreenHeight = (mi.Monitor.Bottom - mi.Monitor.Top);
+                    if (!modes.TryGetValue(mi.DeviceName, out DisplayInfo di))
+                        di = new DisplayInfo();
+                    if (di.ScreenWidth == 0 || di.ScreenHeight == 0)
+                    {
+                        di.ScreenWidth = mi.Monitor.Right - mi.Monitor.Left;
+                        di.ScreenHeight = mi.Monitor.Bottom - mi.Monitor.Top;
+                    }
                     di.Availability = mi.Flags.ToString();
                     displays.Add(di);
                 }

@@ -11,8 +11,12 @@ using System.Windows.Forms;
 
 namespace IOTLinkAddon.Agent
 {
-    public class WindowsMonitorAgent : AgentAddon
+    public class WindowsMonitorAgent : AgentAddon, IDisposable
     {
+        private readonly DisplayInfoCache _displays = new DisplayInfoCache();
+
+        public void Dispose() => _displays.Dispose();
+
         public override void Init(IAddonManager addonManager)
         {
             base.Init(addonManager);
@@ -59,9 +63,12 @@ namespace IOTLinkAddon.Agent
 
         private void SendDisplayInfo()
         {
+            var displays = _displays.Get();
+            if (displays == null)
+                return;
             dynamic addonData = new ExpandoObject();
             addonData.requestType = AddonRequestType.REQUEST_DISPLAY_INFORMATION;
-            addonData.requestData = PlatformHelper.GetDisplays();
+            addonData.requestData = displays;
             GetManager().SendAgentResponse(this, addonData);
         }
 
