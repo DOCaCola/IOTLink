@@ -11,6 +11,7 @@
     <Reference Include="System.Management" />
     <ProjectReference Include="..\..\Addons\ProcessMonitor\Addon_ProcessMonitor.csproj" />
     <ProjectReference Include="..\..\IOTLink\IOTLinkService.csproj" />
+    <ProjectReference Include="..\..\IOTLinkAgent\IOTLinkAgent.csproj" />
     <ProjectReference Include="..\..\IOTLinkAPI\IOTLinkAPI.csproj" />
   </ItemGroup>
 </Project>

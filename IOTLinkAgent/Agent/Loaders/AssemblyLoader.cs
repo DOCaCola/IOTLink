@@ -5,44 +5,44 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 
 namespace IOTLinkAgent.Agent.Loaders
 {
     internal class AssemblyLoader
     {
+        // The agent AppDomain keeps every loaded assembly until exit, including superseded builds.
+        private static readonly Dictionary<string, Assembly> AssembliesByHash = new Dictionary<string, Assembly>();
+
         internal static bool LoadAssemblyDLL(ref AddonInfo addonInfo)
         {
             try
             {
                 string filename = Path.Combine(addonInfo.AddonPath, addonInfo.AddonFile);
 
-                if (File.Exists(filename))
+                if (!File.Exists(filename))
+                    return false;
+
+                Assembly assembly = GetOrLoadAssembly(File.ReadAllBytes(filename));
+                Type scriptType;
+                AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
+                AppDomain.CurrentDomain.ReflectionOnlyAssemblyResolve += CurrentDomain_ReflectionOnlyAssemblyResolve;
+                try
                 {
-                    byte[] bytes = File.ReadAllBytes(filename);
-                    Assembly asb = Assembly.Load(bytes);
-
-                    // Load AddonScript from the assembly.
-                    AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
-                    AppDomain.CurrentDomain.ReflectionOnlyAssemblyResolve += CurrentDomain_ReflectionOnlyAssemblyResolve;
-
-                    IEnumerable<Type> scriptTypeList = asb.GetExportedTypes().Where(w => w.IsSubclassOf(typeof(AgentAddon)));
-
+                    scriptType = assembly.GetExportedTypes().FirstOrDefault(type => type.IsSubclassOf(typeof(AgentAddon)));
+                }
+                finally
+                {
                     AppDomain.CurrentDomain.ReflectionOnlyAssemblyResolve -= CurrentDomain_ReflectionOnlyAssemblyResolve;
                     AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
-
-                    Type scriptType = null;
-                    if (scriptTypeList.Count() > 0)
-                        scriptType = scriptTypeList.FirstOrDefault();
-
-                    if (scriptType != null)
-                    {
-                        LoggerHelper.Debug("Found AgentAddon!");
-                        addonInfo.AgentAddon = (AgentAddon)Activator.CreateInstance(scriptType);
-                        return true;
-                    }
-
-                    return false;
                 }
+
+                if (scriptType == null)
+                    return false;
+
+                LoggerHelper.Debug("Found AgentAddon!");
+                addonInfo.AgentAddon = (AgentAddon)Activator.CreateInstance(scriptType);
+                return true;
             }
             catch (Exception e)
             {
@@ -50,6 +50,23 @@ namespace IOTLinkAgent.Agent.Loaders
             }
 
             return false;
+        }
+
+        private static Assembly GetOrLoadAssembly(byte[] bytes)
+        {
+            string hash;
+            using (var sha256 = SHA256.Create())
+                hash = Convert.ToBase64String(sha256.ComputeHash(bytes));
+
+            lock (AssembliesByHash)
+            {
+                if (!AssembliesByHash.TryGetValue(hash, out var assembly))
+                {
+                    assembly = Assembly.Load(bytes);
+                    AssembliesByHash.Add(hash, assembly);
+                }
+                return assembly;
+            }
         }
 
         private static Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
