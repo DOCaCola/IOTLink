@@ -7,7 +7,8 @@ namespace IOTLinkAPI.Common
 {
     public class CacheContainer<TKey, TValue>
     {
-        private static readonly double DEFAULT_TIMER_INTERVAL = 5 * 60 * 1000;
+        private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(5);
+
         public class CacheItem
         {
             public TKey Key { get; set; }
@@ -18,27 +19,30 @@ namespace IOTLinkAPI.Common
         }
 
         private Dictionary<TKey, CacheItem> _cache = new Dictionary<TKey, CacheItem>();
-
-        private TimeSpan CacheAbsoluteExpiration { get; set; } = TimeSpan.FromSeconds(DEFAULT_TIMER_INTERVAL);
-
-        private TimeSpan CacheSlidingExpiration { get; set; }
-
-        private Timer _cleanupTimer;
-
         private readonly object _cacheLock = new object();
+        private readonly Func<DateTime> _utcNow;
+        private readonly Timer _cleanupTimer;
 
-        public CacheContainer()
+        public CacheContainer() : this(() => DateTime.UtcNow)
         {
-            _cleanupTimer = new Timer(DEFAULT_TIMER_INTERVAL);
-            _cleanupTimer.Elapsed += OnCleanupEvent;
+            _cleanupTimer = new Timer(CacheLifetime.TotalMilliseconds);
+            _cleanupTimer.Elapsed += (sender, args) => RemoveExpiredItems();
             _cleanupTimer.Start();
         }
 
-        private void OnCleanupEvent(object sender, ElapsedEventArgs e)
+        internal CacheContainer(Func<DateTime> utcNow)
+        {
+            _utcNow = utcNow;
+        }
+
+        internal int RemoveExpiredItems()
         {
             lock (_cacheLock)
             {
-                _cache = _cache.Where(kvp => !IsExpired(kvp.Value)).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                var now = _utcNow();
+                var previousCount = _cache.Count;
+                _cache = _cache.Values.Where(item => !IsExpired(item, now)).ToDictionary(item => item.Key);
+                return previousCount - _cache.Count;
             }
         }
 
@@ -47,18 +51,27 @@ namespace IOTLinkAPI.Common
             if (key == null)
                 return default;
 
-            if (!_cache.ContainsKey(key) || IsExpired(_cache[key]))
+            lock (_cacheLock)
             {
-                if (createItem == null)
-                    return default;
+                var now = _utcNow();
+                if (_cache.TryGetValue(key, out var item))
+                {
+                    if (!IsExpired(item, now))
+                    {
+                        item.LastAccessed = now;
+                        return item.Value;
+                    }
 
-                UpdateItem(key, createItem());
+                    _cache.Remove(key);
+                }
             }
 
-            var cacheItem = _cache[key];
-            cacheItem.LastAccessed = DateTime.UtcNow;
+            if (createItem == null)
+                return default;
 
-            return _cache[key].Value;
+            var value = createItem();
+            UpdateItem(key, value);
+            return value;
         }
 
         public bool UpdateItem(TKey key, TValue value)
@@ -68,12 +81,13 @@ namespace IOTLinkAPI.Common
 
             lock (_cacheLock)
             {
+                var now = _utcNow();
                 _cache[key] = new CacheItem
                 {
                     Key = key,
                     Value = value,
-                    LastUpdated = DateTime.UtcNow,
-                    LastAccessed = DateTime.UtcNow
+                    LastUpdated = now,
+                    LastAccessed = now
                 };
             }
 
@@ -82,23 +96,18 @@ namespace IOTLinkAPI.Common
 
         public bool RemoveKey(TKey key)
         {
-            return key != null && (!_cache.ContainsKey(key) || _cache.Remove(key));
-        }
-
-        private bool IsExpired(CacheItem item)
-        {
-            if (item == null)
+            if (key == null)
                 return false;
 
-            return VerifyExpiredDate(CacheAbsoluteExpiration, item.LastUpdated) || VerifyExpiredDate(CacheSlidingExpiration, item.LastAccessed);
+            lock (_cacheLock)
+                _cache.Remove(key);
+
+            return true;
         }
 
-        private bool VerifyExpiredDate(TimeSpan expiration, DateTime dateTime)
+        private static bool IsExpired(CacheItem item, DateTime now)
         {
-            if (expiration == null || expiration.TotalSeconds == 0)
-                return false;
-
-            return ((DateTime.UtcNow - dateTime).TotalSeconds >= expiration.TotalSeconds);
+            return now - item.LastUpdated >= CacheLifetime;
         }
     }
 }
