@@ -3,6 +3,7 @@ using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.Events;
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace IOTLinkAgent.Agent
 {
@@ -13,7 +14,6 @@ namespace IOTLinkAgent.Agent
         private static AgentMain _instance;
 
         private DateTime _lastConfigChange;
-        private string _webSocketUri;
 
         public static AgentMain GetInstance()
         {
@@ -30,20 +30,11 @@ namespace IOTLinkAgent.Agent
             ApplicationConfigHelper.SetEngineConfigReloadHandler(OnConfigChanged);
         }
 
-        internal void Init(List<string> args)
+        internal Task RunAsync(List<string> args)
         {
-            LoggerHelper.Trace("AgentMain::Init() - Initialized.");
-
-            string uri = string.Concat(args);
-            if (!string.IsNullOrWhiteSpace(uri))
-            {
-                LoggerHelper.Verbose("Initializing WebSocketClient - Server URI: {0}", uri);
-
-                _webSocketUri = uri;
-                WebSocketClient.GetInstance().Init(_webSocketUri);
-
-                SetupAgent();
-            }
+            var uri = new Uri(string.Concat(args));
+            LoggerHelper.Verbose("Initializing WebSocketClient - Server URI: {0}", uri);
+            return WebSocketClient.GetInstance().RunAsync(uri, SetupAgent);
         }
 
         private void OnConfigChanged(object sender, ConfigReloadEventArgs e)

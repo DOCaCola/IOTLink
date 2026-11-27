@@ -5,156 +5,107 @@ using IOTLinkAPI.Platform.WebSocket;
 using IOTLinkAPI.Platform.Windows;
 using Newtonsoft.Json;
 using System;
-using System.Collections.Generic;
-using System.Dynamic;
+using System.Buffers;
+using System.Net.WebSockets;
+using System.Text;
 using System.Threading;
-using WebSocketSharp;
+using System.Threading.Tasks;
 
 namespace IOTLinkAgent.Agent.WSClient
 {
     internal class WebSocketClient
     {
-        private static WebSocketClient _instance;
+        private static readonly WebSocketClient Instance = new WebSocketClient();
+        private readonly object _sendLock = new object();
+        private volatile ClientWebSocket _client;
 
-        private WebSocket _client;
-        private string _webSocketUri;
-        private bool _connecting;
+        public static WebSocketClient GetInstance() => Instance;
 
-        public static WebSocketClient GetInstance()
+        private WebSocketClient() { }
+
+        internal async Task RunAsync(Uri uri, Action setupAgent)
         {
-            if (_instance == null)
-                _instance = new WebSocketClient();
-
-            return _instance;
-        }
-
-        private WebSocketClient()
-        {
-            LoggerHelper.Trace("WebSocketClient instance created.");
-        }
-
-        internal void Init(string uri)
-        {
-            if (_client != null)
+            const int maxAttempts = 5;
+            for (int attempt = 1; ; attempt++)
             {
-                LoggerHelper.Verbose("WebSocketClient instance found. Disconnecting.");
-                Disconnect();
-            }
-
-            _webSocketUri = uri;
-            Connect();
-        }
-
-        internal void Connect()
-        {
-            if (string.IsNullOrWhiteSpace(_webSocketUri) || _connecting)
-            {
-                LoggerHelper.Verbose("WebSocketURI is empty, null or client is already connecting. Skipping");
-                return;
-            }
-
-            int tries = 0;
-            _connecting = true;
-
-            if (_client != null && _client.IsAlive)
-            {
-                LoggerHelper.Verbose("Previous session is alive! Closing it.");
-                Disconnect();
-            }
-
-            _client = new WebSocket(_webSocketUri);
-            _client.OnOpen += OnOpen;
-            _client.OnClose += OnClose;
-            _client.OnError += OnError;
-            _client.OnMessage += OnMessageReceived;
-
-            do
-            {
-                LoggerHelper.Verbose("Trying to connect to WebSocketServer: {0} (Try: {1})", _webSocketUri, (tries + 1));
-                if (!_client.IsAlive)
+                using var client = new ClientWebSocket();
+                try
                 {
-                    _client.Connect();
-
-                    if (_client.IsAlive)
-                        break;
+                    await client.ConnectAsync(uri, CancellationToken.None);
+                }
+                catch (WebSocketException ex) when (attempt < maxAttempts)
+                {
+                    LoggerHelper.Warn("WebSocket connection attempt {0} failed: {1}. Retrying in 5 seconds.", attempt, ex.Message);
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                    continue;
                 }
 
-                LoggerHelper.Info("Waiting {0} seconds before trying again...", 5);
-                Thread.Sleep(5000);
-            } while (tries < 5);
-
-            if (!_client.IsAlive)
-            {
-                LoggerHelper.Verbose("Connection not successful after 5 tries. Killing agent.");
-                Environment.Exit(-1);
+                try
+                {
+                    SendMessage(client, MessageType.CLIENT_REQUEST, RequestTypeClient.REQUEST_CONNECTED, new { username = Environment.UserName });
+                    _client = client;
+                    setupAgent();
+                    await ReceiveMessagesAsync(client);
+                }
+                finally
+                {
+                    lock (_sendLock)
+                        _client = null;
+                }
                 return;
             }
-
-            _connecting = false;
-            LoggerHelper.Verbose("Connection successful");
         }
 
-        internal void Disconnect()
+        internal bool IsConnected() => _client?.State == WebSocketState.Open;
+
+        internal void SendResponse(ResponseTypeClient type, object data = null)
         {
-            if (_client != null && _client.IsAlive)
+            // Add-ons can respond on other threads while the receive loop is answering a ping.
+            lock (_sendLock)
             {
-                LoggerHelper.Verbose("Alive connection found. Closing it");
-                _client.Close();
-                Thread.Sleep(1000);
+                if (IsConnected())
+                    SendMessage(_client, MessageType.CLIENT_RESPONSE, type, data);
+            }
+        }
+
+        private async Task ReceiveMessagesAsync(ClientWebSocket client)
+        {
+            byte[] buffer = new byte[8192];
+            ArrayBufferWriter<byte> fragments = null;
+            while (true)
+            {
+                var result = await client.ReceiveAsync(buffer.AsMemory(), CancellationToken.None);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    break;
+                if (result.MessageType != WebSocketMessageType.Text)
+                    continue;
+                if (result.EndOfMessage && fragments == null)
+                {
+                    OnMessageReceived(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                    continue;
+                }
+
+                fragments ??= new ArrayBufferWriter<byte>();
+                fragments.Write(buffer.AsSpan(0, result.Count));
+                if (result.EndOfMessage)
+                {
+                    OnMessageReceived(Encoding.UTF8.GetString(fragments.WrittenSpan));
+                    fragments = null;
+                }
             }
 
-            _client = null;
-        }
-
-        internal bool IsConnected()
-        {
-            return _client != null && _client.IsAlive;
-        }
-
-        internal void SendRequest(RequestTypeClient type, dynamic data = null)
-        {
-            SendMessage(MessageType.CLIENT_REQUEST, type, data);
-        }
-
-        internal void SendResponse(ResponseTypeClient type, dynamic data = null)
-        {
-            SendMessage(MessageType.CLIENT_RESPONSE, type, data);
-        }
-
-        private void OnOpen(object sender, EventArgs e)
-        {
-            LoggerHelper.Debug("WebSocketClient - Connection Opened.");
-
-            Dictionary<string, object> keyValuePairs = new Dictionary<string, object>();
-            keyValuePairs.Add("username", Environment.UserName);
-
-            SendRequest(RequestTypeClient.REQUEST_CONNECTED, keyValuePairs);
-        }
-
-        private void OnClose(object sender, CloseEventArgs arg)
-        {
-            LoggerHelper.Debug("WebSocketClient - Connection Closed (Clean: {0}).", arg.WasClean);
-            Environment.Exit(arg.WasClean ? 0 : -1);
-        }
-
-        private void OnError(object sender, ErrorEventArgs arg)
-        {
-            LoggerHelper.Error("WebSocketClient - Error: {0}", arg.Message);
-            Environment.Exit(-1);
-        }
-
-        private void OnMessageReceived(object sender, MessageEventArgs e)
-        {
-            if (e.Type == Opcode.Close)
-                return;
-
-            if (e.RawData == null || e.RawData.Length == 0 || !e.IsText || string.IsNullOrWhiteSpace(e.Data))
+            lock (_sendLock)
             {
-                LoggerHelper.Trace("OnMessageReceived - Invalid message content [1].");
-                return;
+                client.CloseOutputAsync(client.CloseStatus ?? WebSocketCloseStatus.Empty, client.CloseStatusDescription,
+                    CancellationToken.None).GetAwaiter().GetResult();
             }
+        }
 
-            string data = e.Data;
+        private void OnMessageReceived(string data)
+        {
+            if (string.IsNullOrWhiteSpace(data))
+                return;
+
             LoggerHelper.Verbose("Message received from server");
             LoggerHelper.DataDump("Message Payload: {0}", data);
             try
@@ -281,26 +232,14 @@ namespace IOTLinkAgent.Agent.WSClient
             AgentAddonManager.GetInstance().Raise_OnAgentRequest(addonId, addonData);
         }
 
-        private void SendMessage(MessageType messageType, dynamic contentType, dynamic data = null)
+        private static void SendMessage(ClientWebSocket client, MessageType messageType, object contentType, object data)
         {
-            if (!IsConnected())
-            {
-                LoggerHelper.Verbose("Client not connected. Skipping.");
-                return;
-            }
-
-            dynamic msg = new ExpandoObject();
-            msg.messageType = messageType;
-            msg.content = new ExpandoObject();
-            msg.content.type = contentType;
-            msg.content.data = data;
-
-            string payload = JsonConvert.SerializeObject(msg, Formatting.None);
-
-            LoggerHelper.Verbose("Sending message to server (Type: {0})", contentType.ToString());
+            var message = new { messageType, content = new { type = contentType, data } };
+            string payload = JsonConvert.SerializeObject(message, Formatting.None);
+            LoggerHelper.Verbose("Sending message to server (Type: {0})", contentType);
             LoggerHelper.DataDump("Message Payload: {0}", payload);
-
-            _client.Send(payload);
+            var bytes = new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload));
+            client.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None).GetAwaiter().GetResult();
         }
     }
 }

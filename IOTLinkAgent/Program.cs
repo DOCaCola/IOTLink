@@ -27,25 +27,33 @@ namespace IOTLinkAgent
                 return -1;
             }
 
-            new Task(() => Run(args)).Start();
+            _ = Task.Run(() => RunAsync(args));
 
             Application.Run();
             new ManualResetEvent(false).WaitOne();
             return 0;
         }
 
-        private static void Run(string[] args)
+        private static async Task RunAsync(string[] args)
         {
             Dictionary<string, List<string>> commandLine = ParseCommandLine(args);
+            int result = 0;
             if (commandLine.ContainsKey("agent"))
             {
-                AgentMain.GetInstance().Init(commandLine["agent"]);
+                try
+                {
+                    await AgentMain.GetInstance().RunAsync(commandLine["agent"]);
+                }
+                catch (Exception ex)
+                {
+                    LoggerHelper.Error("Agent connection failed: {0}", ex);
+                    result = -1;
+                }
             }
             else
             {
                 LoggerHelper.Debug("Searching for internal commands");
 
-                int result = 0;
                 Dictionary<string, ICommand> commands = GetCommands();
 
                 foreach (KeyValuePair<string, ICommand> command in commands)
@@ -67,12 +75,11 @@ namespace IOTLinkAgent
                         }
                     }
                 }
-
-                LoggerHelper.Info("Agent finishing with result: {0}", result);
-                LoggerHelper.GetInstance().Flush();
-
-                Environment.Exit(result);
             }
+
+            LoggerHelper.Info("Agent finishing with result: {0}", result);
+            LoggerHelper.GetInstance().Flush();
+            Environment.Exit(result);
         }
 
         private static Dictionary<string, List<string>> ParseCommandLine(string[] args)
