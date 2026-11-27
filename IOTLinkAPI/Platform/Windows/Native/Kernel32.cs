@@ -8,6 +8,21 @@ namespace IOTLinkAPI.Platform.Windows.Native
     public class Kernel32
     {
         [StructLayout(LayoutKind.Sequential)]
+        public struct SystemPowerStatus
+        {
+            public byte ACLineStatus;
+            public byte BatteryFlag;
+            public byte BatteryLifePercent;
+            private byte _systemStatusFlag;
+            public uint BatteryLifeTime;
+            public uint BatteryFullLifeTime;
+        }
+
+        [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetSystemPowerStatus(out SystemPowerStatus status);
+
+        [StructLayout(LayoutKind.Sequential)]
         internal struct GroupAffinity
         {
             internal UIntPtr Mask;

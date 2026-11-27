@@ -1,132 +1,95 @@
 ﻿using IOTLinkAPI.Configs;
+using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.HomeAssistant;
+using IOTLinkAPI.Platform.Windows.Native;
+using Newtonsoft.Json;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace IOTLinkAddon.Service.Monitors
 {
     class PowerMonitor : BaseMonitor
     {
-        private static readonly string CONFIG_KEY = "Power";
-
-        public override string GetConfigKey()
+        private const string ConfigKey = "Power";
+        internal const string StateTopic = "Stats/Power/State";
+        internal delegate bool ReadPowerStatus(out Kernel32.SystemPowerStatus status);
+        private readonly ReadPowerStatus _read;
+        private static readonly MonitorItem[] Discovery =
         {
-            return CONFIG_KEY;
+            Sensor("PowerStatus", "Power Status", "acOnline", binary: true, deviceClass: "plug"),
+            Sensor("BatteryStatus", "Battery Status", "batteryPresent", binary: true, deviceClass: "plug"),
+            Sensor("BatteryLevel", "Battery Level", "chargeStatus", icon: "mdi:battery"),
+            Sensor("FullLifetime", "Battery Full Lifetime", "fullLifetimeSeconds", unit: "minutes", icon: "mdi:timer-outline"),
+            Sensor("RemainingTime", "Battery Remaining Time", "remainingSeconds", unit: "minutes", icon: "mdi:timer-outline"),
+            Sensor("Remaining", "Battery Remaining", "remainingPercent", unit: "%", deviceClass: "battery")
+        };
+
+        public PowerMonitor() : this(Kernel32.GetSystemPowerStatus) { }
+        internal PowerMonitor(ReadPowerStatus read) => _read = read;
+
+        public override string GetConfigKey() => ConfigKey;
+
+        private static MonitorItem Sensor(string id, string name, string field, bool binary = false,
+            string unit = null, string deviceClass = null, string icon = null)
+        {
+            string value = "value_json." + field;
+            return new MonitorItem
+            {
+                ConfigKey = ConfigKey,
+                Topic = StateTopic,
+                DiscoveryKey = StateTopic + "/" + id,
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions
+                {
+                    Id = id,
+                    Name = name,
+                    Component = binary ? HomeAssistantComponent.BinarySensor : HomeAssistantComponent.Sensor,
+                    PayloadOn = binary ? "True" : null,
+                    PayloadOff = binary ? "False" : null,
+                    Unit = unit,
+                    DeviceClass = deviceClass,
+                    Icon = icon,
+                    ValueTemplate = unit == "minutes"
+                        ? "{{ " + value + " // 60 if " + value + " is not none else none }}"
+                        : "{{ " + value + " }}"
+                }
+            };
         }
+
+        public override List<MonitorItem> GetDiscoveryItems(Configuration config, int interval) => new(Discovery);
 
         public override List<MonitorItem> GetMonitorItems(Configuration config, int interval)
         {
-            List<MonitorItem> result = new List<MonitorItem>();
-
-            PowerStatus powerStatus = SystemInformation.PowerStatus;
-
-            // Power Status
-            bool powerLineStatus = powerStatus.PowerLineStatus == PowerLineStatus.Online;
-            result.Add(new MonitorItem
+            var items = GetDiscoveryItems(config, interval);
+            if (!_read(out var status))
             {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_RAW,
-                Topic = "Stats/Power/Status",
-                Value = powerLineStatus,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.BinarySensor,
-                    Id = "PowerStatus",
-                    Name = "Power Status",
-                    PayloadOff = "False",
-                    PayloadOn = "True",
-                    DeviceClass = "plug"
-                }
-            });
+                var error = new Win32Exception(Marshal.GetLastWin32Error());
+                LoggerHelper.Error("Could not read system power status: {0}", error.Message);
+                return items;
+            }
 
-            // Battery Status
-            bool batteryStatus = powerStatus.BatteryChargeStatus != BatteryChargeStatus.NoSystemBattery && powerStatus.BatteryChargeStatus != BatteryChargeStatus.Unknown;
-            result.Add(new MonitorItem
+            var flags = (BatteryChargeStatus)status.BatteryFlag;
+            // Unknown (255) also has the NoSystemBattery bit set.
+            bool? present = flags == BatteryChargeStatus.Unknown ? null : !flags.HasFlag(BatteryChargeStatus.NoSystemBattery);
+            items.Add(new MonitorItem
             {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_RAW,
-                Topic = "Stats/Battery/Status",
-                Value = batteryStatus,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
+                ConfigKey = ConfigKey,
+                Topic = StateTopic,
+                Type = MonitorItemType.TYPE_RETAINED_STATE,
+                Value = JsonConvert.SerializeObject(new
                 {
-                    Component = HomeAssistantComponent.BinarySensor,
-                    Id = "BatteryStatus",
-                    Name = "Battery Status",
-                    DeviceClass = "plug"
-                }
+                    acOnline = status.ACLineStatus switch { 0 => false, 1 => true, _ => (bool?)null },
+                    batteryPresent = present,
+                    chargeStatus = flags == BatteryChargeStatus.Unknown ? null : flags.ToString(),
+                    fullLifetimeSeconds = Estimate(status.BatteryFullLifeTime),
+                    remainingSeconds = Estimate(status.BatteryLifeTime),
+                    remainingPercent = present != false && status.BatteryLifePercent <= 100 ? (int?)status.BatteryLifePercent : null
+                })
             });
+            return items;
 
-            // Battery Level
-            result.Add(new MonitorItem
-            {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_RAW,
-                Topic = "Stats/Battery/Level",
-                Value = powerStatus.BatteryChargeStatus,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "BatteryLevel",
-                    Name = "Battery Level",
-                    DeviceClass = "battery"
-                }
-            });
-
-            // Battery Full Lifetime
-            result.Add(new MonitorItem
-            {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_RAW,
-                Topic = "Stats/Battery/FullLifetime",
-                Value = powerStatus.BatteryFullLifetime,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "FullLifetime",
-                    Name = "Battery Full Lifetime",
-                    Unit = "minutes",
-                    ValueTemplate = "{{ ( value | float / 60 ) | int }}",
-                    Icon = "mdi:timer-outline"
-                }
-            });
-
-            // Battery Remaining Time
-            result.Add(new MonitorItem
-            {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_RAW,
-                Topic = "Stats/Battery/RemainingTime",
-                Value = powerStatus.BatteryLifeRemaining,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "RemainingTime",
-                    Name = "Battery Remaining Time",
-                    Unit = "minutes",
-                    ValueTemplate = "{{ ( value | float / 60 ) | int }}",
-                    Icon = "mdi:timer-outline"
-
-                }
-            });
-
-            // Battery Remaining (%)
-            result.Add(new MonitorItem
-            {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_RAW,
-                Topic = "Stats/Battery/RemainingPercent",
-                Value = (powerStatus.BatteryLifePercent * 100),
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "Remaining",
-                    Name = "Battery Remaining",
-                    Unit = "%",
-                    DeviceClass = "battery"
-                }
-            });
-
-            return result;
+            uint? Estimate(uint seconds) => present != false && seconds != uint.MaxValue ? seconds : null;
         }
     }
 }

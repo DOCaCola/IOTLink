@@ -51,7 +51,8 @@ formats:
 # HardDrive         : Retained JSON at windows-monitor/stats/hard-drive/state. The drives object is keyed by drive letter.
 #                     Capacity fields use the reported unit (diskFormat). availableFreeSpace is caller-available space.
 #                     totalFreeSpace is free space on the volume. driveUsage is a percentage.
-# Power             : Power (Status, Battery Status, Remaning Time, etc).
+# Power             : One retained JSON snapshot at windows-monitor/stats/power/state for AC and battery status.
+#                     fullLifetimeSeconds, remainingSeconds and remainingPercent are null when unavailable.
 # NetworkInfo       : Retained JSON at windows-monitor/stats/network/state. The adapters object is keyed by Windows adapter ID.
 #                     It includes IP addresses, link speed (Mbps), wired status, byte counters and rates (bytes/second).
 # SystemInfo        : System Info (Current user physically logged in).
