@@ -96,6 +96,6 @@ monitors:
     interval: 60
     cacheable: true
   Display-Screenshot:
-    enabled: true
+    enabled: false
     interval: 60
     cacheable: false

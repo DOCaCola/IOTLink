@@ -12,8 +12,6 @@
 #define APP_PUBLISHER "DOCaCola (IOTLink fork)"
 #define APP_URL "https://github.com/DOCaCola/IOTLink"
 
-#include "donate.iss"
-
 [Setup]
 ; Basic Information
 AppId={{CD785E2E-5102-4053-A1E1-208CA1D8DC98}
@@ -49,7 +47,7 @@ SetupIconFile=Assets\images\icons\application.ico
 ; Main Files
 Source: "{#StageDir}\app\*"; Excludes: "*.pdb"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 ; Configuration Sample
-Source: "Assets\config.yaml-sample";                                           DestDir: "{commonappdata}\{#APP_DIR_NAME}\Configs"; DestName: "configuration.yaml"; Flags: confirmoverwrite; Permissions: everyone-full
+Source: "Assets\config.yaml-sample";                                           DestDir: "{commonappdata}\{#APP_DIR_NAME}\Configs"; DestName: "configuration.yaml"; Flags: onlyifdoesntexist; Permissions: everyone-full
 ; Application Icon
 Source: "Assets\images\icons\application.ico";                                 DestDir: "{app}\Icons"; Flags: ignoreversion
 ; Folder Icons
@@ -70,13 +68,13 @@ Source: "Addons\Commands\Assets\*";                                            D
 
 ; Addon - Windows Monitor
 Source: "Addons\WindowsMonitor\addon.yaml";                                    DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: onlyifdoesntexist;                  Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
-Source: "Addons\WindowsMonitor\config.yaml";                                   DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: confirmoverwrite;               Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
+Source: "Addons\WindowsMonitor\config.yaml";                                   DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: onlyifdoesntexist;               Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
 Source: "{#StageDir}\addons\WindowsMonitor\WindowsMonitor.dll";                DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
 Source: "Addons\WindowsMonitor\Assets\*";                                      DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: ignoreversion recursesubdirs;   Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
 
 ; Addon - Process Monitor
 Source: "Addons\ProcessMonitor\addon.yaml";                                    DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: onlyifdoesntexist;                  Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
-Source: "Addons\ProcessMonitor\config.yaml";                                   DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: confirmoverwrite;               Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
+Source: "Addons\ProcessMonitor\config.yaml";                                   DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: onlyifdoesntexist;               Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
 Source: "{#StageDir}\addons\ProcessMonitor\ProcessMonitor.dll";                DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
 Source: "Addons\ProcessMonitor\Assets\*";                                      DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: onlyifdoesntexist recursesubdirs;   Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
 
