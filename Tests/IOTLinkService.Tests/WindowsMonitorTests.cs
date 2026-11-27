@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Dynamic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using IOTLinkAddon.Service;
 using IOTLinkAPI.Addons;
@@ -39,14 +41,67 @@ namespace IOTLinkService.Tests
                     Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)), "Enable was not applied");
                     Assert.IsTrue(manager.Discoveries > 0);
                     Assert.IsTrue(manager.Values > 0);
-                    int requests = manager.Requests;
-                    Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref manager.Requests) > requests, 5000), "Polling did not resume");
+                    int requests = manager.Requests.Count;
+                    Assert.IsTrue(SpinWait.SpinUntil(() => manager.Requests.Count > requests, 5000), "Polling did not resume");
 
                     WriteConfig(path, false);
                     Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)), "Disable was not applied");
                     int afterDisable = manager.Total;
                     Assert.IsFalse(SpinWait.SpinUntil(() => manager.Total != afterDisable, 1500), "Polling continued after disable");
                     AssertSilent(service, manager, afterDisable);
+                }
+                finally
+                {
+                    service.Raise_OnMQTTDisconnected(this, null);
+                    configs.RemoveReloadHandler(path, onReload);
+                    Directory.Delete(directory, true);
+                }
+            }
+        }
+
+        [TestMethod]
+        public void ReloadUpdatesSensorIntervalsCacheabilityAndRemovedSensors()
+        {
+            string directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))).FullName;
+            string path = Path.Combine(directory, "config.yaml");
+            var service = new WindowsMonitorService();
+            var manager = new RecordingManager();
+            var configs = ConfigurationManager.GetInstance();
+            const int idleTimeRequest = 0;
+            const int displayInfoRequest = 1;
+            dynamic data = new ExpandoObject();
+            data.requestType = idleTimeRequest;
+            data.requestData = 17;
+            var reply = new AgentAddonResponseEventArgs { Data = data, Username = "sample" };
+
+            using (var reload = new AutoResetEvent(false))
+            {
+                ConfigurationManager.ConfigReloadedHandler onReload = (sender, args) => reload.Set();
+                try
+                {
+                    File.WriteAllText(path, "enabled: true\nmonitors:\n" +
+                        "  IdleTime: { enabled: true, interval: 3600, cacheable: true }\n" +
+                        "  Display-Info: { enabled: true, interval: 1 }\n");
+                    service.SetCurrentPath(directory);
+                    service.SetAddonInfo(new AddonInfo { AddonId = "WindowsMonitor" });
+                    service.Init(manager);
+                    configs.SetReloadHandler(path, onReload);
+
+                    Assert.IsTrue(SpinWait.SpinUntil(() => manager.Requests.Count(r => r == displayInfoRequest) >= 2, 5000));
+                    Assert.AreEqual(1, manager.Requests.Count(r => r == idleTimeRequest));
+                    service.Raise_OnAgentResponse(this, reply);
+                    service.Raise_OnAgentResponse(this, reply);
+                    Assert.AreEqual(1, manager.Values, "Identical cacheable IdleTime values should publish once");
+
+                    File.WriteAllText(path, "enabled: true\nmonitors:\n  IdleTime: { enabled: true, interval: 1 }\n");
+                    Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)), "Sensor settings were not reloaded");
+                    int idleBefore = manager.Requests.Count(r => r == idleTimeRequest);
+                    int displayBefore = manager.Requests.Count(r => r == displayInfoRequest);
+                    Assert.IsTrue(SpinWait.SpinUntil(() => manager.Requests.Count(r => r == idleTimeRequest) >= idleBefore + 2, 5000));
+                    Assert.AreEqual(displayBefore, manager.Requests.Count(r => r == displayInfoRequest), "Removed sensor kept polling");
+                    service.Raise_OnAgentResponse(this, reply);
+                    service.Raise_OnAgentResponse(this, reply);
+                    Assert.AreEqual(3, manager.Values, "Removing cacheable should publish both replies");
                 }
                 finally
                 {
@@ -78,13 +133,14 @@ namespace IOTLinkService.Tests
 
         private sealed class RecordingManager : IAddonServiceManager
         {
-            public int Discoveries, Values, Requests;
-            public int Total => Volatile.Read(ref Discoveries) + Volatile.Read(ref Values) + Volatile.Read(ref Requests);
+            public int Discoveries, Values;
+            public readonly ConcurrentQueue<int> Requests = new ConcurrentQueue<int>();
+            public int Total => Volatile.Read(ref Discoveries) + Volatile.Read(ref Values) + Requests.Count;
 
             public void PublishDiscoveryMessage(ServiceAddon sender, string topic, string prefix, HassDiscoveryOptions options) => Interlocked.Increment(ref Discoveries);
             public void PublishMessage(ServiceAddon sender, string topic, string message) => Interlocked.Increment(ref Values);
             public void PublishMessage(ServiceAddon sender, string topic, byte[] message) => Interlocked.Increment(ref Values);
-            public void SendAgentRequest(ServiceAddon sender, dynamic addonData, string username = null) => Interlocked.Increment(ref Requests);
+            public void SendAgentRequest(ServiceAddon sender, dynamic addonData, string username = null) => Requests.Enqueue((int)addonData.requestType);
             public void SubscribeTopic(ServiceAddon sender, string topic, MQTTHandlers.MQTTMessageEventHandler handler, bool acceptGlobals = true) => throw new NotSupportedException();
             public bool HasSubscription(ServiceAddon sender, string topic) => throw new NotSupportedException();
             public void RemoveSubscription(ServiceAddon sender, string topic) => throw new NotSupportedException();

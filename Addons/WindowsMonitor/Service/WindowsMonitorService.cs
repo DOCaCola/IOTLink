@@ -35,6 +35,25 @@ namespace IOTLinkAddon.Service
         private string _configPath;
         private Configuration _config;
 
+        private sealed class MonitorSettings
+        {
+            public Configuration Config { get; }
+            public bool Enabled { get; }
+            public int Interval { get; }
+            public bool Cacheable { get; }
+
+            public MonitorSettings(Configuration config)
+            {
+                Config = config;
+                Enabled = config?.GetValue("enabled", false) ?? false;
+                Interval = config?.GetValue("interval", DEFAULT_INTERVAL) ?? DEFAULT_INTERVAL;
+                Cacheable = config?.GetValue("cacheable", false) ?? false;
+            }
+
+            public bool IsDue(uint counter) => Enabled && counter % Interval == 0;
+        }
+
+        private readonly Dictionary<string, MonitorSettings> _monitorSettings = new Dictionary<string, MonitorSettings>();
         private Dictionary<string, string> _cache = new Dictionary<string, string>();
 
         private List<string> _discoveryItems = new List<string>();
@@ -76,10 +95,11 @@ namespace IOTLinkAddon.Service
         private void ApplyConfiguration(Configuration config, bool sendValues)
         {
             _config = config;
+            _monitorSettings.Clear();
             _enabled = config != null && config.GetValue("enabled", false);
             foreach (IMonitor monitor in monitors)
             {
-                if (!_enabled || !CheckMonitorEnabled(monitor.GetConfigKey()))
+                if (!_enabled || !GetMonitorSettings(monitor.GetConfigKey()).Enabled)
                 {
                     (monitor as IDisposable)?.Dispose();
                     continue;
@@ -127,11 +147,12 @@ namespace IOTLinkAddon.Service
             foreach (var monitor in monitors)
             {
                 string configKey = monitor.GetConfigKey();
-                if (CheckMonitorEnabled(configKey))
+                var settings = GetMonitorSettings(configKey);
+                if (settings.Enabled)
                 {
                     LoggerHelper.Debug("WindowsMonitorService::SetupDiscovery() - {0} Monitor - Sending configuration", configKey);
 
-                    List<MonitorItem> items = monitor.GetMonitorItems(GetMonitorConfiguration(configKey), GetMonitorInterval(configKey));
+                    List<MonitorItem> items = monitor.GetMonitorItems(settings.Config, settings.Interval);
                     if (items == null)
                         continue;
 
@@ -231,7 +252,7 @@ namespace IOTLinkAddon.Service
                 {
                     foreach (KeyValuePair<string, AddonRequestType> entry in agentRequests)
                     {
-                        if (!CheckMonitorEnabled(entry.Key) || !CheckMonitorInterval(entry.Key))
+                        if (!GetMonitorSettings(entry.Key).IsDue(_monitorCounter))
                             continue;
 
                         LoggerHelper.Debug("WindowsMonitorService::ExecuteMonitor({0}) - Agent {1} - Request information ({2})", monitor.GetConfigKey(), entry.Key, entry.Value.ToString());
@@ -253,18 +274,19 @@ namespace IOTLinkAddon.Service
             {
                 // Get monitor sensors
                 string configKey = monitor.GetConfigKey();
-                if (CheckMonitorEnabled(configKey) && CheckMonitorInterval(configKey))
+                var settings = GetMonitorSettings(configKey);
+                if (settings.IsDue(_monitorCounter))
                 {
                     LoggerHelper.Debug("WindowsMonitorService::ExecuteMonitor({0}) - Sending information", configKey);
 
-                    List<MonitorItem> items = monitor.GetMonitorItems(GetMonitorConfiguration(configKey), GetMonitorInterval(configKey));
+                    List<MonitorItem> items = monitor.GetMonitorItems(settings.Config, settings.Interval);
                     if (items == null)
                         return;
 
                     foreach (MonitorItem item in items)
                     {
                         PublishDiscoveryItem(item);
-                        PublishItem(item);
+                        PublishItem(item, settings.Cacheable);
                     }
                 }
             }
@@ -274,7 +296,7 @@ namespace IOTLinkAddon.Service
             }
         }
 
-        private void PublishItem(MonitorItem item)
+        private void PublishItem(MonitorItem item, bool cacheable)
         {
             if (item == null || item.Value == null || string.IsNullOrWhiteSpace(item.Topic))
                 return;
@@ -320,7 +342,7 @@ namespace IOTLinkAddon.Service
                     return;
             }
 
-            SendMonitorValue(item.Topic, value, item.ConfigKey);
+            SendMonitorValue(item.Topic, value, cacheable);
         }
 
         private void PublishDiscoveryItem(MonitorItem item)
@@ -383,38 +405,34 @@ namespace IOTLinkAddon.Service
                 AddonRequestType requestType = (AddonRequestType)e.Data.requestType;
                 string configKey = agentRequests.FirstOrDefault(x => x.Value == requestType).Key;
 
-                if (string.IsNullOrWhiteSpace(configKey) || !CheckMonitorEnabled(configKey))
+                if (configKey == null)
                     continue;
 
-                List<MonitorItem> items = monitor.OnAgentResponse(GetMonitorConfiguration(configKey), requestType, e.Data, e.Username);
+                var settings = GetMonitorSettings(configKey);
+                if (!settings.Enabled)
+                    continue;
+
+                List<MonitorItem> items = monitor.OnAgentResponse(settings.Config, requestType, e.Data, e.Username);
                 if (items == null || items.Count == 0)
                     continue;
 
                 foreach (MonitorItem item in items)
                 {
                     PublishDiscoveryItem(item);
-                    PublishItem(item);
+                    PublishItem(item, settings.Cacheable);
                 }
             }
         }
 
-        private bool CheckMonitorEnabled(string configKey)
+        private MonitorSettings GetMonitorSettings(string configKey)
         {
-            if (string.IsNullOrWhiteSpace(configKey))
-                return false;
+            if (!_monitorSettings.TryGetValue(configKey, out var settings))
+            {
+                settings = new MonitorSettings(_config.GetValue($"monitors:{configKey}"));
+                _monitorSettings.Add(configKey, settings);
+            }
 
-            return GetMonitorEnabled(configKey);
-        }
-
-        private bool CheckMonitorInterval(string configKey)
-        {
-            if (string.IsNullOrWhiteSpace(configKey))
-                return false;
-
-            if ((_monitorCounter % GetMonitorInterval(configKey)) != 0)
-                return false;
-
-            return true;
+            return settings;
         }
 
         private string GetMonitorFormat(string configKey, string formatKey, string defaultValue)
@@ -440,44 +458,12 @@ namespace IOTLinkAddon.Service
             return value;
         }
 
-        private bool GetMonitorEnabled(string configKey)
-        {
-            if (string.IsNullOrWhiteSpace(configKey))
-                return false;
-
-            return _config.GetValue($"monitors:{configKey}:enabled", false);
-        }
-
-        private bool GetMonitorCacheable(string configKey)
-        {
-            if (string.IsNullOrWhiteSpace(configKey))
-                return false;
-
-            return _config.GetValue($"monitors:{configKey}:cacheable", false);
-        }
-
-        private int GetMonitorInterval(string configKey)
-        {
-            if (string.IsNullOrWhiteSpace(configKey))
-                return DEFAULT_INTERVAL;
-
-            return _config.GetValue($"monitors:{configKey}:interval", DEFAULT_INTERVAL);
-        }
-
-        private Configuration GetMonitorConfiguration(string configKey)
-        {
-            if (string.IsNullOrWhiteSpace(configKey))
-                return null;
-
-            return _config.GetValue($"monitors:{configKey}");
-        }
-
-        private void SendMonitorValue(string topic, string value, string configKey = null)
+        private void SendMonitorValue(string topic, string value, bool cacheable)
         {
             if (string.IsNullOrWhiteSpace(topic))
                 return;
 
-            if (GetMonitorCacheable(configKey))
+            if (cacheable)
             {
                 if (_cache.ContainsKey(topic) && _cache[topic].CompareTo(value) == 0)
                     return;
