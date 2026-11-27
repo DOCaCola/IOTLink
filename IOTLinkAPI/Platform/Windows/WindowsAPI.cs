@@ -15,6 +15,8 @@ namespace IOTLinkAPI.Platform.Windows
 #pragma warning disable 1591
     public static class WindowsAPI
     {
+        private static readonly BootTimeCache BootTime = new BootTimeCache(ReadLastBootUpTime);
+
         private static readonly IntPtr WTS_CURRENT_SERVER_HANDLE = IntPtr.Zero;
         private static readonly int WTS_CURRENT_SESSION = -1;
 
@@ -455,6 +457,11 @@ namespace IOTLinkAPI.Platform.Windows
         }
 
         public static DateTimeOffset LastBootUpTime()
+        {
+            return BootTime.Get();
+        }
+
+        private static DateTimeOffset ReadLastBootUpTime()
         {
             using (ManagementObject mo = new ManagementObject(@"\\.\root\cimv2:Win32_OperatingSystem=@"))
             {

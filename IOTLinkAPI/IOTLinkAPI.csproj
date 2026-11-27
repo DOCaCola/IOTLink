@@ -173,6 +173,7 @@
     <Compile Include="Platform\Windows\Native\WtsApi32.cs" />
     <Compile Include="Platform\Windows\ProcessEventManager.cs" />
     <Compile Include="Platform\Windows\WindowsSessionInfo.cs" />
+    <Compile Include="Platform\Windows\BootTimeCache.cs" />
     <Compile Include="Platform\Windows\WindowsAPI.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
