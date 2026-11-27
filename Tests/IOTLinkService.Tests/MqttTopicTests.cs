@@ -136,7 +136,18 @@ namespace IOTLinkService.Tests
             await AssertRetainedSnapshot(items, "windows-monitor/stats/memory/state", 4);
         }
 
-        internal static async Task AssertRetainedSnapshot(List<MonitorItem> items, string suffix, int entityCount)
+        internal static Task AssertRetainedSnapshot(List<MonitorItem> items, string suffix, int entityCount)
+        {
+            var snapshot = items.Single(i => i.Value != null);
+            return AssertRetainedSnapshot(suffix, (string)snapshot.Value, entityCount, manager =>
+            {
+                foreach (var item in items.Where(i => i.CreateDiscoveryOptions != null))
+                    manager.PublishDiscoveryMessage(item.Topic, item.ConfigKey, item.CreateDiscoveryOptions(item), "WindowsMonitor");
+                manager.PublishMessage(snapshot.Topic, (string)snapshot.Value, "WindowsMonitor", forceRetain: true);
+            });
+        }
+
+        internal static async Task AssertRetainedSnapshot(string suffix, string payload, int entityCount, Action<MQTTClientManager> publish)
         {
             int port;
             using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
@@ -160,10 +171,7 @@ namespace IOTLinkService.Tests
             manager.OnMQTTConnected += (_, _) => connected.TrySetResult();
             manager.Start();
             await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            foreach (var item in items.Where(i => i.CreateDiscoveryOptions != null))
-                manager.PublishDiscoveryMessage(item.Topic, item.ConfigKey, item.CreateDiscoveryOptions(item), "WindowsMonitor");
-            var snapshot = items.Single(i => i.Value != null);
-            manager.PublishMessage(snapshot.Topic, (string)snapshot.Value, "WindowsMonitor", forceRetain: true);
+            publish(manager);
             string topic = MQTTHelper.GetFullTopicName(config.Prefix) + suffix;
             using var deadline = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
             while ((await broker.GetRetainedApplicationMessagesAsync()).Count < entityCount + 1)
@@ -180,7 +188,7 @@ namespace IOTLinkService.Tests
             await subscriber.SubscribeAsync(topic);
             var replay = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.IsTrue(replay.Retain);
-            Assert.AreEqual(snapshot.Value, Encoding.UTF8.GetString(replay.Payload));
+            Assert.AreEqual(payload, Encoding.UTF8.GetString(replay.Payload));
         }
 
         private static Task Receive(IManagedMqttClient client, string topic)

@@ -1,7 +1,9 @@
-﻿using System.Collections.Generic;
+﻿using Newtonsoft.Json;
+using System.Collections.Generic;
 
 namespace IOTLinkAddon.Common
 {
+    [JsonObject(ItemNullValueHandling = NullValueHandling.Ignore)]
     class ProcessInfoMQTT
     {
         public string Id { get; set; }

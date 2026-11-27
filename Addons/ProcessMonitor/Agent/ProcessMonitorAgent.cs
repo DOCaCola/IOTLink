@@ -77,22 +77,21 @@ namespace IOTLinkAddon.Agent
         {
             LoggerHelper.Verbose("ProcessMonitorAgent::OnAgentRequest");
 
-            AddonRequestType requestType = e.Data.requestType;
+            AddonRequestType requestType = (AddonRequestType)e.Data.requestType;
             switch (requestType)
             {
                 case AddonRequestType.REQUEST_PROCESS_INFORMATION:
-                    ExecuteProcessInformation(e.Data.processId);
+                    ExecuteProcessInformation((int)e.Data.processId, (string)e.Data.monitorName, (long)e.Data.requestId);
                     break;
 
                 default: break;
             }
         }
 
-        private void ExecuteProcessInformation(dynamic data)
+        private void ExecuteProcessInformation(int processId, string monitorName, long requestId)
         {
             try
             {
-                int processId = (int)data;
                 LoggerHelper.Verbose("ProcessMonitorAgent::ExecuteProcessInformation({0}) - Started", processId);
 
                 ProcessInformation processInfo = ProcessHelper.GetProcessInformation(processId, false);
@@ -104,6 +103,8 @@ namespace IOTLinkAddon.Agent
 
                 dynamic addonData = new ExpandoObject();
                 addonData.requestType = AddonRequestType.REQUEST_PROCESS_INFORMATION;
+                addonData.monitorName = monitorName;
+                addonData.requestId = requestId;
                 addonData.requestData = FillProcessInformation(processInfo);
 
                 GetManager().SendAgentResponse(this, addonData);

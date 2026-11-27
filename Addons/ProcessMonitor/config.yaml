@@ -29,7 +29,9 @@ formats:
 ############################################################################
 # Monitors
 ############################################################################
-# Configure which processes should be monitored.
+# Each enabled monitor publishes a retained snapshot at
+# process-monitor/processes/<monitor>/state under the machine topic.
+# State is ON with process details, or OFF with null details.
 # For minizing file size, each monitor is split in a different file and
 # included here. Uncomment for use, and check file for details.
 ############################################################################
