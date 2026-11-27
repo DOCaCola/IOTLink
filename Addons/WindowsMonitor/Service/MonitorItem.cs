@@ -1,9 +1,17 @@
 ﻿using IOTLinkAPI.Platform.HomeAssistant;
+using System;
 
 namespace IOTLinkAddon.Service
 {
     class MonitorItem
     {
+        public MonitorItem(string instanceId = null)
+        {
+            InstanceId = instanceId;
+        }
+
+        public string InstanceId { get; }
+
         public string Topic { get; set; }
 
         public string ConfigKey { get; set; }
@@ -12,6 +20,6 @@ namespace IOTLinkAddon.Service
 
         public object Value { get; set; }
 
-        public HassDiscoveryOptions DiscoveryOptions { get; set; }
+        public Func<MonitorItem, HassDiscoveryOptions> CreateDiscoveryOptions { get; set; }
     }
 }

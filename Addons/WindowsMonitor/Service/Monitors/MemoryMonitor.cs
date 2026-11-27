@@ -28,7 +28,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/Memory/Usage",
                 Value = memoryInfo.MemoryLoad,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "Usage",
@@ -45,7 +45,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_MEMORY_SIZE,
                 Topic = "Stats/Memory/Available",
                 Value = memoryInfo.AvailPhysical,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "Available",
@@ -62,7 +62,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_MEMORY_SIZE,
                 Topic = "Stats/Memory/Used",
                 Value = (memoryInfo.TotalPhysical - memoryInfo.AvailPhysical),
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "Used",
@@ -79,7 +79,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_MEMORY_SIZE,
                 Topic = "Stats/Memory/Total",
                 Value = memoryInfo.TotalPhysical,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "Total",

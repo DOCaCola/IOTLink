@@ -27,7 +27,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_DATETIME,
                 Topic = "Stats/System/BootTime",
                 Value = PlatformHelper.LastBootUpTime(),
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "BootTime",
@@ -44,12 +44,12 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = inSeconds ? MonitorItemType.TYPE_RAW : MonitorItemType.TYPE_UPTIME,
                 Topic = "Stats/System/Uptime",
                 Value = Math.Round(Kernel32.GetTickCount64() / 1000d, 0),
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "Uptime",
                     Name = "System Uptime",
-                    Unit = inSeconds ? "s" : null,
+                    Unit = item.Type == MonitorItemType.TYPE_RAW ? "s" : null,
                     Icon = "mdi:timer-outline"
                 }
             });

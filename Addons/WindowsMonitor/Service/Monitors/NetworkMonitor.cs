@@ -112,22 +112,23 @@ namespace IOTLinkAddon.Service.Monitors
 
                 _previous.TryGetValue(adapter.Id, out var previous);
                 _previous[adapter.Id] = networkInfo;
-                var topic = $"Stats/Network/{i}";
+                string index = i.ToString();
+                var topic = $"Stats/Network/{index}";
 
                 // IPv4
                 if (!string.IsNullOrWhiteSpace(networkInfo.IPv4Address))
                 {
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(index)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_RAW,
                         Topic = topic + "/IPv4",
                         Value = networkInfo.IPv4Address,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{i}_IPv4Adress",
-                            Name = $"Network #{i} - IPv4",
+                            Id = $"{item.InstanceId}_IPv4Adress",
+                            Name = $"Network #{item.InstanceId} - IPv4",
                             Icon = "mdi:lan"
                         }
                     });
@@ -136,84 +137,84 @@ namespace IOTLinkAddon.Service.Monitors
                 // IPv6
                 if (!string.IsNullOrWhiteSpace(networkInfo.IPv6Address))
                 {
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(index)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_RAW,
                         Topic = topic + "/IPv6",
                         Value = networkInfo.IPv6Address,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{i}_IPv6Adress",
-                            Name = $"Network #{i} - IPv6",
+                            Id = $"{item.InstanceId}_IPv6Adress",
+                            Name = $"Network #{item.InstanceId} - IPv6",
                             Icon = "mdi:lan"
                         }
                     });
                 }
 
                 // Network Speed
-                result.Add(new MonitorItem
+                result.Add(new MonitorItem(index)
                 {
                     ConfigKey = CONFIG_KEY,
                     Type = MonitorItemType.TYPE_RAW,
                     Topic = topic + "/Speed",
                     Value = networkInfo.Speed,
-                    DiscoveryOptions = new HassDiscoveryOptions()
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                     {
                         Component = HomeAssistantComponent.Sensor,
-                        Id = $"{i}_Speed",
-                        Name = $"Network #{i} - Speed",
+                        Id = $"{item.InstanceId}_Speed",
+                        Name = $"Network #{item.InstanceId} - Speed",
                         Unit = "Mbps",
                         Icon = "mdi:speedometer"
                     }
                 });
 
                 // Network Wired
-                result.Add(new MonitorItem
+                result.Add(new MonitorItem(index)
                 {
                     ConfigKey = CONFIG_KEY,
                     Type = MonitorItemType.TYPE_RAW,
                     Topic = topic + "/Wired",
                     Value = networkInfo.Wired,
-                    DiscoveryOptions = new HassDiscoveryOptions()
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                     {
                         Component = HomeAssistantComponent.BinarySensor,
-                        Id = $"{i}_Wired",
-                        Name = $"Network #{i} - Wired",
+                        Id = $"{item.InstanceId}_Wired",
+                        Name = $"Network #{item.InstanceId} - Wired",
                         PayloadOff = "False",
                         PayloadOn = "True"
                     }
                 });
 
                 // Network Bytes Sent
-                result.Add(new MonitorItem
+                result.Add(new MonitorItem(index)
                 {
                     ConfigKey = CONFIG_KEY,
                     Type = MonitorItemType.TYPE_NETWORK_SIZE,
                     Topic = topic + "/BytesSent",
                     Value = networkInfo.BytesSent,
-                    DiscoveryOptions = new HassDiscoveryOptions()
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                     {
                         Component = HomeAssistantComponent.Sensor,
-                        Id = $"{i}_BytesSent",
-                        Name = $"Network #{i} - Bytes Sent",
+                        Id = $"{item.InstanceId}_BytesSent",
+                        Name = $"Network #{item.InstanceId} - Bytes Sent",
                         Unit = "B"
                     }
                 });
 
                 // Network Bytes Received
-                result.Add(new MonitorItem
+                result.Add(new MonitorItem(index)
                 {
                     ConfigKey = CONFIG_KEY,
                     Type = MonitorItemType.TYPE_NETWORK_SIZE,
                     Topic = topic + "/BytesReceived",
                     Value = networkInfo.BytesReceived,
-                    DiscoveryOptions = new HassDiscoveryOptions()
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                     {
                         Component = HomeAssistantComponent.Sensor,
-                        Id = $"{i}_BytesReceived",
-                        Name = $"Network #{i} - Bytes Received",
+                        Id = $"{item.InstanceId}_BytesReceived",
+                        Name = $"Network #{item.InstanceId} - Bytes Received",
                         Unit = "B"
                     }
                 });
@@ -221,17 +222,17 @@ namespace IOTLinkAddon.Service.Monitors
                 // Bytes Sent per second
                 if (previous != null && networkInfo.BytesSent >= previous.BytesSent)
                 {
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(index)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_NETWORK_SPEED,
                         Topic = topic + "/BytesSentPerSecond",
                         Value = (networkInfo.BytesSent - previous.BytesSent) / interval,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{i}_BytesSentPerSecond",
-                            Name = $"Network #{i} - BPS Sent",
+                            Id = $"{item.InstanceId}_BytesSentPerSecond",
+                            Name = $"Network #{item.InstanceId} - BPS Sent",
                             Unit = "Bps"
                         }
                     });
@@ -240,17 +241,17 @@ namespace IOTLinkAddon.Service.Monitors
                 // Bytes Received per second
                 if (previous != null && networkInfo.BytesReceived >= previous.BytesReceived)
                 {
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(index)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_NETWORK_SPEED,
                         Topic = topic + "/BytesReceivedPerSecond",
                         Value = (networkInfo.BytesReceived - previous.BytesReceived) / interval,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{i}_BytesReceivedPerSecond",
-                            Name = $"Network #{i} - BPS Received",
+                            Id = $"{item.InstanceId}_BytesReceivedPerSecond",
+                            Name = $"Network #{item.InstanceId} - BPS Received",
                             Unit = "Bps"
                         }
                     });

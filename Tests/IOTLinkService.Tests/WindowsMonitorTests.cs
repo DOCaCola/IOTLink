@@ -66,6 +66,85 @@ namespace IOTLinkService.Tests
         }
 
         [TestMethod]
+        public void DiscoveryBuildsOncePerTopicUntilRefreshOrReload()
+        {
+            string directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))).FullName;
+            string path = Path.Combine(directory, "config.yaml");
+            const string config = "enabled: true\nmonitors:\n  Probe:\n    enabled: true\n    interval: 1\n";
+            var monitor = new DiscoveryProbe();
+            var service = new WindowsMonitorService(monitor);
+            var manager = new RecordingManager();
+            var configs = ConfigurationManager.GetInstance();
+            using (var reload = new AutoResetEvent(false))
+            {
+                ConfigurationManager.ConfigReloadedHandler onReload = (s, e) => reload.Set();
+                try
+                {
+                    File.WriteAllText(path, config + "    discoveryOptions:\n      First: { name: Custom }\n");
+                    service.SetCurrentPath(directory);
+                    service.SetAddonInfo(new AddonInfo { AddonId = "WindowsMonitor" });
+                    service.Init(manager);
+                    configs.SetReloadHandler(path, onReload);
+
+                    Assert.AreEqual(1, monitor.Builds);
+                    var initial = manager.LastDiscovery["Stats/First"];
+                    Assert.AreEqual("Custom", initial.Name);
+                    Assert.IsTrue(SpinWait.SpinUntil(() => manager.Values >= 4, 5000), "Expected two polls with both topics");
+                    Assert.AreEqual(2, monitor.Builds);
+                    Assert.AreEqual(2, manager.Discoveries);
+                    Assert.AreEqual("Second", manager.LastDiscovery["Stats/Second"].Id);
+
+                    service.Raise_OnRefreshRequested(this, EventArgs.Empty);
+                    Assert.AreEqual(4, monitor.Builds);
+                    Assert.AreEqual(4, manager.Discoveries);
+                    Assert.AreNotSame(initial, manager.LastDiscovery["Stats/First"]);
+                    Assert.AreEqual("Custom", manager.LastDiscovery["Stats/First"].Name);
+
+                    File.WriteAllText(path, config);
+                    Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)));
+                    Assert.AreEqual(6, monitor.Builds);
+                    Assert.AreEqual(6, manager.Discoveries);
+                    Assert.AreEqual("First", manager.LastDiscovery["Stats/First"].Name);
+                }
+                finally
+                {
+                    service.Raise_OnMQTTDisconnected(this, null);
+                    configs.RemoveReloadHandler(path, onReload);
+                    Directory.Delete(directory, true);
+                }
+            }
+        }
+
+        private sealed class DiscoveryProbe : BaseMonitor
+        {
+            public int Builds;
+            private int _polls;
+
+            public override string GetConfigKey() => "Probe";
+
+            public override List<MonitorItem> GetMonitorItems(Configuration config, int interval)
+            {
+                var items = new List<MonitorItem> { Sensor("First") };
+                if (++_polls > 1)
+                    items.Add(Sensor("Second"));
+                return items;
+            }
+
+            private MonitorItem Sensor(string id) => new MonitorItem(id)
+            {
+                ConfigKey = GetConfigKey(),
+                Topic = "Stats/" + id,
+                Value = 1,
+                Type = MonitorItemType.TYPE_RAW,
+                CreateDiscoveryOptions = item =>
+                {
+                    Interlocked.Increment(ref Builds);
+                    return new HassDiscoveryOptions { Id = item.InstanceId, Name = item.InstanceId };
+                }
+            };
+        }
+
+        [TestMethod]
         public void MasterSwitchStopsMonitoringAndCanBeReenabledByConfigReload()
         {
             string directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))).FullName;
@@ -241,10 +320,15 @@ namespace IOTLinkService.Tests
         {
             public int Discoveries, Values;
             public readonly ConcurrentDictionary<string, string> LastValues = new ConcurrentDictionary<string, string>();
+            public readonly ConcurrentDictionary<string, HassDiscoveryOptions> LastDiscovery = new ConcurrentDictionary<string, HassDiscoveryOptions>();
             public readonly ConcurrentQueue<int> Requests = new ConcurrentQueue<int>();
             public int Total => Volatile.Read(ref Discoveries) + Volatile.Read(ref Values) + Requests.Count;
 
-            public void PublishDiscoveryMessage(ServiceAddon sender, string topic, string prefix, HassDiscoveryOptions options) => Interlocked.Increment(ref Discoveries);
+            public void PublishDiscoveryMessage(ServiceAddon sender, string topic, string prefix, HassDiscoveryOptions options)
+            {
+                LastDiscovery[topic] = options;
+                Interlocked.Increment(ref Discoveries);
+            }
             public void PublishMessage(ServiceAddon sender, string topic, string message)
             {
                 LastValues[topic] = message;

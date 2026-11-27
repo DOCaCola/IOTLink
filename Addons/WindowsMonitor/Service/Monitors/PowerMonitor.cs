@@ -28,7 +28,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/Power/Status",
                 Value = powerLineStatus,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.BinarySensor,
                     Id = "PowerStatus",
@@ -47,7 +47,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/Battery/Status",
                 Value = batteryStatus,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.BinarySensor,
                     Id = "BatteryStatus",
@@ -63,7 +63,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/Battery/Level",
                 Value = powerStatus.BatteryChargeStatus,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "BatteryLevel",
@@ -79,7 +79,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/Battery/FullLifetime",
                 Value = powerStatus.BatteryFullLifetime,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "FullLifetime",
@@ -97,7 +97,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/Battery/RemainingTime",
                 Value = powerStatus.BatteryLifeRemaining,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "RemainingTime",
@@ -116,7 +116,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/Battery/RemainingPercent",
                 Value = (powerStatus.BatteryLifePercent * 100),
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "Remaining",

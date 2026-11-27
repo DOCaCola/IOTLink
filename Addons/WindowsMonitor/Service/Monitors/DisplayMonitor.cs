@@ -54,33 +54,34 @@ namespace IOTLinkAddon.Service.Monitors
             {
                 DisplayInfo displayInfo = displayInfos[i];
 
-                string topic = string.Format("Stats/Display/{0}", i);
+                string index = i.ToString();
+                string topic = $"Stats/Display/{index}";
 
-                result.Add(new MonitorItem
+                result.Add(new MonitorItem(index)
                 {
                     ConfigKey = CONFIG_KEY_INFO,
                     Type = MonitorItemType.TYPE_RAW,
                     Topic = topic + "/ScreenWidth",
                     Value = displayInfo.ScreenWidth,
-                    DiscoveryOptions = new HassDiscoveryOptions()
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                     {
-                        Id = $"Screen_{i}_Width",
-                        Name = $"Screen #{i} - Width",
+                        Id = $"Screen_{item.InstanceId}_Width",
+                        Name = $"Screen #{item.InstanceId} - Width",
                         Component = HomeAssistantComponent.Sensor,
                         Icon = "mdi:monitor"
                     }
                 });
 
-                result.Add(new MonitorItem
+                result.Add(new MonitorItem(index)
                 {
                     ConfigKey = CONFIG_KEY_INFO,
                     Type = MonitorItemType.TYPE_RAW,
                     Topic = topic + "/ScreenHeight",
                     Value = displayInfo.ScreenHeight,
-                    DiscoveryOptions = new HassDiscoveryOptions()
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                     {
-                        Id = $"Screen_{i}_Height",
-                        Name = $"Screen #{i} - Height",
+                        Id = $"Screen_{item.InstanceId}_Height",
+                        Name = $"Screen #{item.InstanceId} - Height",
                         Component = HomeAssistantComponent.Sensor,
                         Icon = "mdi:monitor"
                     }
@@ -95,16 +96,17 @@ namespace IOTLinkAddon.Service.Monitors
             List<MonitorItem> result = new List<MonitorItem>();
 
             LoggerHelper.Verbose("DisplayMonitor - Received Display Screenshot");
-            result.Add(new MonitorItem
+            string index = $"{data.requestData.displayIndex}";
+            result.Add(new MonitorItem(index)
             {
                 ConfigKey = CONFIG_KEY_SCREEN,
                 Type = MonitorItemType.TYPE_RAW_BYTES,
-                Topic = string.Format("Stats/Display/{0}/Screen", data.requestData.displayIndex),
+                Topic = $"Stats/Display/{index}/Screen",
                 Value = (byte[])data.requestData.displayScreen,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                 {
-                    Id = $"Screen_{data.requestData.displayIndex}",
-                    Name = $"Screen #{data.requestData.displayIndex}",
+                    Id = $"Screen_{item.InstanceId}",
+                    Name = $"Screen #{item.InstanceId}",
                     Component = HomeAssistantComponent.Camera
                 }
             });

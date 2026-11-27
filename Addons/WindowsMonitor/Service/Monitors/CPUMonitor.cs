@@ -42,7 +42,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/CPU/Usage",
                 Value = Math.Round(_cpuUsage.NextValue(), 0),
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Id = "Usage",
                     Unit = "%",

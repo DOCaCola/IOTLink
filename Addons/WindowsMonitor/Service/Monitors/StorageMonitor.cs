@@ -54,118 +54,118 @@ namespace IOTLinkAddon.Service.Monitors
                     int driveUsage = (int)((100.0 / totalSize) * usedSpace);
 
                     // Total Size
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(drive)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_DISK_SIZE,
                         Topic = topic + "/TotalSize",
                         Value = totalSize,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{drive}_TotalStorage",
-                            Name = $"Storage {drive} - Total Storage",
+                            Id = $"{item.InstanceId}_TotalStorage",
+                            Name = $"Storage {item.InstanceId} - Total Storage",
                             Unit = "GB",
                             Icon = "mdi:harddisk"
                         }
                     });
 
                     // Available Free Space
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(drive)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_DISK_SIZE,
                         Topic = topic + "/AvailableFreeSpace",
                         Value = availableFreeSpace,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{drive}_AvailableFreeSpace",
-                            Name = $"Storage {drive} - Available Free Space",
+                            Id = $"{item.InstanceId}_AvailableFreeSpace",
+                            Name = $"Storage {item.InstanceId} - Available Free Space",
                             Unit = "GB",
                             Icon = "mdi:harddisk"
                         }
                     });
 
                     // Total Free Space
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(drive)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_DISK_SIZE,
                         Topic = topic + "/TotalFreeSpace",
                         Value = totalFreeSpace,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{drive}_TotalFreeSpace",
-                            Name = $"Storage {drive} - Total Free Space",
+                            Id = $"{item.InstanceId}_TotalFreeSpace",
+                            Name = $"Storage {item.InstanceId} - Total Free Space",
                             Unit = "GB",
                             Icon = "mdi:harddisk"
                         }
                     });
 
                     // Used Space
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(drive)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_DISK_SIZE,
                         Topic = topic + "/UsedSpace",
                         Value = usedSpace,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{drive}_UsedSpace",
-                            Name = $"Storage {drive} - Used Space",
+                            Id = $"{item.InstanceId}_UsedSpace",
+                            Name = $"Storage {item.InstanceId} - Used Space",
                             Unit = "GB",
                             Icon = "mdi:harddisk"
                         }
                     });
 
                     // Drive Format
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(drive)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_RAW,
                         Topic = topic + "/DriveFormat",
                         Value = driveInfo.DriveFormat,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{drive}_DriveFormat",
-                            Name = $"Storage {drive} - Format",
+                            Id = $"{item.InstanceId}_DriveFormat",
+                            Name = $"Storage {item.InstanceId} - Format",
                             Icon = "mdi:harddisk"
                         }
                     });
 
                     // Drive Usage
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(drive)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_RAW,
                         Topic = topic + "/DriveUsage",
                         Value = driveUsage,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{drive}_DriveUsage",
-                            Name = $"Storage {drive} - Usage",
+                            Id = $"{item.InstanceId}_DriveUsage",
+                            Name = $"Storage {item.InstanceId} - Usage",
                             Unit = "%",
                             Icon = "mdi:chart-donut"
                         }
                     });
 
                     // Drive Label
-                    result.Add(new MonitorItem
+                    result.Add(new MonitorItem(drive)
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_RAW,
                         Topic = topic + "/VolumeLabel",
                         Value = driveInfo.VolumeLabel,
-                        DiscoveryOptions = new HassDiscoveryOptions()
+                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
-                            Id = $"{drive}_VolumeLabel",
-                            Name = $"Storage {drive} - Label",
+                            Id = $"{item.InstanceId}_VolumeLabel",
+                            Name = $"Storage {item.InstanceId} - Label",
                             Icon = "mdi:harddisk"
                         }
                     });

@@ -35,7 +35,7 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/System/CurrentUser",
                 Value = PlatformHelper.GetCurrentUsername(),
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "CurrentUsername",
@@ -70,12 +70,12 @@ namespace IOTLinkAddon.Service.Monitors
                 Type = config.GetValue("inSeconds", false) ? MonitorItemType.TYPE_RAW : MonitorItemType.TYPE_UPTIME,
                 Topic = "Stats/System/IdleTime",
                 Value = data.requestData,
-                DiscoveryOptions = new HassDiscoveryOptions()
+                CreateDiscoveryOptions = item => new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "IdleTime",
                     Name = "System Idle Time",
-                    Unit = config.GetValue("inSeconds", false) ? "s" : null,
+                    Unit = item.Type == MonitorItemType.TYPE_RAW ? "s" : null,
                     Icon = "mdi:timer-outline"
                 }
             });

@@ -98,19 +98,20 @@ namespace IOTLinkAddon.Service
         private readonly Dictionary<string, MonitorSettings> _monitorSettings = new Dictionary<string, MonitorSettings>();
         private Dictionary<string, string> _cache = new Dictionary<string, string>();
 
-        private List<string> _discoveryItems = new List<string>();
+        private readonly HashSet<string> _discoveredTopics = new HashSet<string>(StringComparer.Ordinal);
 
-        private readonly List<IMonitor> monitors = new List<IMonitor>()
+        private readonly IMonitor[] monitors;
+
+        public WindowsMonitorService() : this(
+            new CPUMonitor(), new MemoryMonitor(), new PowerMonitor(), new NetworkMonitor(),
+            new StorageMonitor(), new SystemMonitor(), new UptimeMonitor(), new DisplayMonitor())
         {
-            new CPUMonitor(),
-            new MemoryMonitor(),
-            new PowerMonitor(),
-            new NetworkMonitor(),
-            new StorageMonitor(),
-            new SystemMonitor(),
-            new UptimeMonitor(),
-            new DisplayMonitor()
-        };
+        }
+
+        internal WindowsMonitorService(params IMonitor[] monitors)
+        {
+            this.monitors = monitors;
+        }
 
         public override void Init(IAddonManager addonManager)
         {
@@ -276,7 +277,7 @@ namespace IOTLinkAddon.Service
         private void ClearCaches()
         {
             _cache.Clear();
-            _discoveryItems.Clear();
+            _discoveredTopics.Clear();
         }
 
         private void SendAllInformation()
@@ -390,19 +391,20 @@ namespace IOTLinkAddon.Service
 
         private void PublishDiscoveryItem(MonitorItem item)
         {
-            if (item == null || item.DiscoveryOptions == null || string.IsNullOrWhiteSpace(item.Topic))
+            if (item?.CreateDiscoveryOptions == null || string.IsNullOrWhiteSpace(item.Topic))
                 return;
 
-            if (_discoveryItems.Contains(item.Topic))
+            if (_discoveredTopics.Contains(item.Topic))
                 return;
 
-            item.DiscoveryOptions.Icon = GetDiscoveryOption(item.ConfigKey, item.DiscoveryOptions.Id, "icon", item.DiscoveryOptions.Icon);
-            item.DiscoveryOptions.ValueTemplate = GetDiscoveryOption(item.ConfigKey, item.DiscoveryOptions.Id, "valueTemplate", item.DiscoveryOptions.ValueTemplate);
-            item.DiscoveryOptions.Unit = GetDiscoveryOption(item.ConfigKey, item.DiscoveryOptions.Id, "unitOfMeasurement", item.DiscoveryOptions.Unit);
-            item.DiscoveryOptions.Name = GetDiscoveryOption(item.ConfigKey, item.DiscoveryOptions.Id, "name", item.DiscoveryOptions.Name);
+            var options = item.CreateDiscoveryOptions(item);
+            options.Icon = GetDiscoveryOption(item.ConfigKey, options.Id, "icon", options.Icon);
+            options.ValueTemplate = GetDiscoveryOption(item.ConfigKey, options.Id, "valueTemplate", options.ValueTemplate);
+            options.Unit = GetDiscoveryOption(item.ConfigKey, options.Id, "unitOfMeasurement", options.Unit);
+            options.Name = GetDiscoveryOption(item.ConfigKey, options.Id, "name", options.Name);
 
-            GetManager().PublishDiscoveryMessage(this, item.Topic, item.ConfigKey, item.DiscoveryOptions); //TODO: name should be combination of configkey and discoveryOptions.name
-            _discoveryItems.Add(item.Topic);
+            GetManager().PublishDiscoveryMessage(this, item.Topic, item.ConfigKey, options);
+            _discoveredTopics.Add(item.Topic);
         }
 
         private string FormatDateObject(object value, string format)
