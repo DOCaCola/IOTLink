@@ -1,10 +1,13 @@
 ﻿using IOTLinkAPI.Helpers;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.WebSockets;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using static IOTLinkService.Service.WebSockets.Server.WebSocketHandlers;
 
 namespace IOTLinkService.Service.WebSockets.Server
@@ -197,9 +200,6 @@ namespace IOTLinkService.Service.WebSockets.Server
             WebSocket webSocket = webSocketContext.WebSocket;
             try
             {
-                int offset = 0;
-                byte[] buffer = new byte[BUFFER_LENGTH];
-                int free = buffer.Length;
                 string currentId = string.Empty;
 
                 if (!_clients.ContainsKey(webSocket))
@@ -212,44 +212,7 @@ namespace IOTLinkService.Service.WebSockets.Server
                     currentId = _clients[webSocket];
                 }
 
-                while (!_disconnect && webSocket.State == WebSocketState.Open)
-                {
-                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer, offset, free), CancellationToken.None);
-                    offset += receiveResult.Count;
-                    free -= receiveResult.Count;
-
-                    if (!receiveResult.EndOfMessage)
-                    {
-                        if (free == 0)
-                        {
-                            var newSize = buffer.Length + BUFFER_LENGTH;
-                            var newBuffer = new byte[newSize];
-                            Array.Copy(buffer, 0, newBuffer, 0, offset);
-                            buffer = newBuffer;
-                            free = buffer.Length - offset;
-                        }
-                        continue;
-                    }
-
-                    if (receiveResult.MessageType == WebSocketMessageType.Text)
-                    {
-                        string data = System.Text.Encoding.UTF8.GetString(buffer, 0, buffer.Length);
-                        data = data.Replace("\0", string.Empty);
-                        OnMessageHandler?.Invoke(this, new WebSocketMessageEventArgs { ID = currentId, Message = data });
-                    }
-                    else
-                    {
-                        if (receiveResult.MessageType == WebSocketMessageType.Binary)
-                            await webSocket.CloseAsync(WebSocketCloseStatus.InvalidMessageType, "This server only accept text frames", CancellationToken.None);
-                        else
-                            await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
-                    }
-
-                    // Reset buffer
-                    offset = 0;
-                    buffer = new byte[BUFFER_LENGTH];
-                    free = buffer.Length;
-                }
+                await ReceiveMessagesAsync(webSocket, currentId);
             }
             catch (WebSocketException ex)
             {
@@ -270,6 +233,47 @@ namespace IOTLinkService.Service.WebSockets.Server
 
                     webSocket.Dispose();
                 }
+            }
+        }
+
+        internal async Task ReceiveMessagesAsync(WebSocket webSocket, string clientId)
+        {
+            var buffer = new ArraySegment<byte>(new byte[BUFFER_LENGTH]);
+            while (!_disconnect && webSocket.State == WebSocketState.Open)
+            {
+                string text;
+                using (var message = new MemoryStream())
+                {
+                    WebSocketReceiveResult result;
+                    do
+                    {
+                        result = await webSocket.ReceiveAsync(buffer, CancellationToken.None);
+                        if (result.MessageType != WebSocketMessageType.Text)
+                        {
+                            bool binary = result.MessageType == WebSocketMessageType.Binary;
+                            var status = binary ? WebSocketCloseStatus.InvalidMessageType : WebSocketCloseStatus.NormalClosure;
+                            await webSocket.CloseAsync(status, binary ? "This server only accepts text frames" : string.Empty, CancellationToken.None);
+                            return;
+                        }
+
+                        if (!result.EndOfMessage)
+                        {
+                            message.Write(buffer.Array, 0, result.Count);
+                            if (_disconnect || webSocket.State != WebSocketState.Open)
+                                return;
+                        }
+                    } while (!result.EndOfMessage);
+
+                    if (message.Length == 0)
+                        text = Encoding.UTF8.GetString(buffer.Array, 0, result.Count);
+                    else
+                    {
+                        message.Write(buffer.Array, 0, result.Count);
+                        text = Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+                    }
+                }
+
+                OnMessageHandler?.Invoke(this, new WebSocketMessageEventArgs { ID = clientId, Message = text.Replace("\0", string.Empty) });
             }
         }
 
