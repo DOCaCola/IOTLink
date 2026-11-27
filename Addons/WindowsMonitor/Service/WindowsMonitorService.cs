@@ -26,6 +26,9 @@ namespace IOTLinkAddon.Service
         private static readonly string DEFAULT_FORMAT_TIME = "HH:mm:ss";
         private static readonly string DEFAULT_FORMAT_DATETIME = "yyyy-MM-dd HH:mm:ss";
 
+        private readonly object _monitorLock = new object();
+        private bool _enabled;
+        private bool _mqttDisconnected;
         private Timer _monitorTimer;
         private uint _monitorCounter = 0;
 
@@ -52,74 +55,75 @@ namespace IOTLinkAddon.Service
         {
             base.Init(addonManager);
 
-            var cfgManager = ConfigurationManager.GetInstance();
-            _configPath = Path.Combine(_currentPath, "config.yaml");
-            _config = cfgManager.GetConfiguration(_configPath);
-            cfgManager.SetReloadHandler(_configPath, OnConfigReload);
+            lock (_monitorLock)
+            {
+                var cfgManager = ConfigurationManager.GetInstance();
+                _configPath = Path.Combine(_currentPath, "config.yaml");
+                var config = cfgManager.GetConfiguration(_configPath);
+                cfgManager.SetReloadHandler(_configPath, OnConfigReload);
 
-            OnSessionChangeHandler += OnSessionChange;
-            OnConfigReloadHandler += OnConfigReload;
-            OnAgentResponseHandler += OnAgentResponse;
-            OnMQTTConnectedHandler += OnMQTTConnected;
-            OnMQTTDisconnectedHandler += OnMQTTDisconnected;
-            OnRefreshRequestedHandler += OnClearEvent;
+                OnSessionChangeHandler += OnSessionChange;
+                OnConfigReloadHandler += OnConfigReload;
+                OnAgentResponseHandler += OnAgentResponse;
+                OnMQTTConnectedHandler += OnMQTTConnected;
+                OnMQTTDisconnectedHandler += OnMQTTDisconnected;
+                OnRefreshRequestedHandler += OnClearEvent;
 
-            InitMonitors();
-            ClearCaches();
-            SetupTimers();
-            SetupDiscovery();
+                ApplyConfiguration(config, false);
+            }
         }
 
-        private void InitMonitors()
+        private void ApplyConfiguration(Configuration config, bool sendValues)
         {
+            _config = config;
+            _enabled = config != null && config.GetValue("enabled", false);
             foreach (IMonitor monitor in monitors)
             {
+                if (!_enabled || !CheckMonitorEnabled(monitor.GetConfigKey()))
+                {
+                    (monitor as IDisposable)?.Dispose();
+                    continue;
+                }
+
                 try
                 {
                     monitor.Init();
                 }
                 catch (Exception ex)
                 {
-                    LoggerHelper.Error("WindowsMonitorService::InitMonitors() - Error while trying to initilize {0}: {1}", monitor.GetConfigKey(), ex.Message);
+                    LoggerHelper.Error("Failed to initialize {0} monitor: {1}", monitor.GetConfigKey(), ex.Message);
                 }
             }
+
+            if (!_enabled)
+                _monitorCounter = 0;
+
+            RefreshMonitoring(sendValues);
         }
 
-        private void SetupTimers()
+        private void StopPolling()
         {
-            if (_config == null || !_config.GetValue("enabled", false))
-            {
-                LoggerHelper.Info("WindowsMonitorService::SetupTimers() - System monitor is disabled.");
-                if (_monitorTimer != null)
-                {
-                    _monitorTimer.Stop();
-                    _monitorTimer = null;
-                }
+            _monitorTimer?.Dispose();
+            _monitorTimer = null;
+        }
 
+        private void RefreshMonitoring(bool sendValues)
+        {
+            StopPolling();
+            ClearCaches();
+            if (!_enabled || _mqttDisconnected)
                 return;
-            }
 
-            if (_monitorTimer == null)
-            {
-                _monitorTimer = new Timer();
-                _monitorTimer.Elapsed += new ElapsedEventHandler(OnMonitorTimerElapsed);
-            }
-
-            _monitorTimer.Stop();
-            _monitorTimer.Interval = 1000;
+            _monitorTimer = new Timer(1000) { AutoReset = false };
+            _monitorTimer.Elapsed += OnMonitorTimerElapsed;
             _monitorTimer.Start();
-
-            LoggerHelper.Info("WindowsMonitorService::SetupTimers() - System monitor is activated.");
+            SetupDiscovery();
+            if (sendValues)
+                SendAllInformation();
         }
 
         private void SetupDiscovery()
         {
-            if (_config == null)
-            {
-                LoggerHelper.Info("WindowsMonitorService::SetupDiscovery() - MQTT discovery is disabled.");
-                return;
-            }
-
             foreach (var monitor in monitors)
             {
                 string configKey = monitor.GetConfigKey();
@@ -141,25 +145,26 @@ namespace IOTLinkAddon.Service
 
         private void OnMQTTConnected(object sender, EventArgs e)
         {
-            ClearCaches();
-            SetupTimers();
-            SetupDiscovery();
-            SendAllInformation();
+            lock (_monitorLock)
+            {
+                _mqttDisconnected = false;
+                RefreshMonitoring(true);
+            }
         }
 
         private void OnMQTTDisconnected(object sender, EventArgs e)
         {
-            _monitorTimer.Stop();
+            lock (_monitorLock)
+            {
+                _mqttDisconnected = true;
+                StopPolling();
+            }
         }
 
         private void OnClearEvent(object sender, EventArgs e)
         {
-            LoggerHelper.Verbose("WindowsMonitorService::OnClearEvent() - Event {0} Received. Clearing cache and resending information.", e.GetType().ToString());
-
-            ClearCaches();
-            SetupTimers();
-            SetupDiscovery();
-            SendAllInformation();
+            lock (_monitorLock)
+                RefreshMonitoring(true);
         }
 
         private void OnConfigReload(object sender, ConfigReloadEventArgs e)
@@ -167,33 +172,41 @@ namespace IOTLinkAddon.Service
             if (e.ConfigType != ConfigType.CONFIGURATION_ADDON)
                 return;
 
-            LoggerHelper.Verbose("WindowsMonitorService::OnConfigReload() - Reloading configuration");
-
-            _config = ConfigurationManager.GetInstance().GetConfiguration(_configPath);
-            ClearCaches();
-            SetupTimers();
-            SetupDiscovery();
-            SendAllInformation();
+            lock (_monitorLock)
+                ApplyConfiguration(ConfigurationManager.GetInstance().GetConfiguration(_configPath), true);
         }
 
         private void OnSessionChange(object sender, SessionChangeEventArgs e)
         {
-            LoggerHelper.Verbose("WindowsMonitorService::OnSessionChange() - {0}: {1}", e.Reason.ToString(), e.Username);
+            lock (_monitorLock)
+            {
+                if (!_enabled)
+                    return;
 
-            GetManager().PublishMessage(this, e.Reason.ToString(), e.Username);
-            GetManager().PublishMessage(this, "status", e.Reason.ToString());
+                GetManager().PublishMessage(this, e.Reason.ToString(), e.Username);
+                GetManager().PublishMessage(this, "status", e.Reason.ToString());
+            }
         }
 
         private void OnMonitorTimerElapsed(object source, ElapsedEventArgs e)
         {
-            LoggerHelper.Debug("WindowsMonitorService::OnMonitorTimerElapsed() - Started");
+            lock (_monitorLock)
+            {
+                // An elapsed callback can already be queued when its timer is disposed.
+                if (source != _monitorTimer)
+                    return;
 
-            SendAllInformation();
-
-            if (_monitorCounter++ == uint.MaxValue)
-                _monitorCounter = 0;
-
-            LoggerHelper.Debug("WindowsMonitorService::OnMonitorTimerElapsed() - Completed");
+                try
+                {
+                    SendAllInformation();
+                    _monitorCounter++;
+                }
+                finally
+                {
+                    if (source == _monitorTimer)
+                        _monitorTimer.Start();
+                }
+            }
         }
 
         private void ClearCaches()
@@ -204,13 +217,8 @@ namespace IOTLinkAddon.Service
 
         private void SendAllInformation()
         {
-            _monitorTimer.Stop(); // Stop the timer in order to prevent overlapping
-
-            // Execute Monitors
             foreach (IMonitor monitor in monitors)
                 ExecuteMonitor(monitor);
-
-            _monitorTimer.Start(); // After everything, start the timer again.
         }
 
         private void ExecuteMonitor(IMonitor monitor)
@@ -356,6 +364,15 @@ namespace IOTLinkAddon.Service
         }
 
         private void OnAgentResponse(object sender, AgentAddonResponseEventArgs e)
+        {
+            lock (_monitorLock)
+            {
+                if (_enabled)
+                    HandleAgentResponse(e);
+            }
+        }
+
+        private void HandleAgentResponse(AgentAddonResponseEventArgs e)
         {
             foreach (IMonitor monitor in monitors)
             {

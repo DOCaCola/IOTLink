@@ -7,19 +7,26 @@ using System.Diagnostics;
 
 namespace IOTLinkAddon.Service.Monitors
 {
-    class UptimeMonitor : BaseMonitor
+    class UptimeMonitor : BaseMonitor, IDisposable
     {
         private static readonly string CONFIG_KEY = "Uptime";
 
-        private static PerformanceCounter _uptimePerformanceCounter;
+        private PerformanceCounter _uptimePerformanceCounter;
 
         public override void Init()
         {
-            if (_uptimePerformanceCounter == null)
-                _uptimePerformanceCounter = new PerformanceCounter("System", "System Up Time");
+            if (_uptimePerformanceCounter != null)
+                return;
+
+            _uptimePerformanceCounter = new PerformanceCounter("System", "System Up Time");
 
             _uptimePerformanceCounter.NextValue();
-            PlatformHelper.LastBootUpTime();
+        }
+
+        public void Dispose()
+        {
+            _uptimePerformanceCounter?.Dispose();
+            _uptimePerformanceCounter = null;
         }
 
         public override string GetConfigKey()

@@ -6,18 +6,26 @@ using System.Diagnostics;
 
 namespace IOTLinkAddon.Service.Monitors
 {
-    class CPUMonitor : BaseMonitor
+    class CPUMonitor : BaseMonitor, IDisposable
     {
         private static readonly string CONFIG_KEY = "CPU";
 
-        private static PerformanceCounter _cpuPerformanceCounter;
+        private PerformanceCounter _cpuPerformanceCounter;
 
         public override void Init()
         {
-            if (_cpuPerformanceCounter == null)
-                _cpuPerformanceCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+            if (_cpuPerformanceCounter != null)
+                return;
+
+            _cpuPerformanceCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
 
             _cpuPerformanceCounter.NextValue();
+        }
+
+        public void Dispose()
+        {
+            _cpuPerformanceCounter?.Dispose();
+            _cpuPerformanceCounter = null;
         }
 
         public override string GetConfigKey()
