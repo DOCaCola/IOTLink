@@ -29,7 +29,7 @@
         private void InitializeComponent()
         {
             components = new System.ComponentModel.Container();
-            this.ServiceName = "Service1";
+            this.ServiceName = IOTLinkAPI.Helpers.PathHelper.APP_FOLDER_NAME;
         }
 
         #endregion

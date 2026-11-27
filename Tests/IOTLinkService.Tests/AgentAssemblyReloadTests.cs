@@ -1,10 +1,11 @@
 using System;
-using System.CodeDom.Compiler;
+using System.Reflection;
 using System.IO;
 using System.Linq;
 using IOTLinkAgent.Agent.Loaders;
 using IOTLinkAPI.Addons;
-using Microsoft.CSharp;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace IOTLinkService.Tests
@@ -60,14 +61,14 @@ namespace IOTLinkService.Tests
 
         private static void BuildAddon(string dll, string typeName)
         {
-            using (var compiler = new CSharpCodeProvider())
-            {
-                var options = new CompilerParameters { OutputAssembly = dll };
-                options.ReferencedAssemblies.Add(typeof(AgentAddon).Assembly.Location);
-                var result = compiler.CompileAssemblyFromSource(options,
-                    "public class " + typeName + " : IOTLinkAPI.Addons.AgentAddon { }");
-                Assert.AreEqual(0, result.NativeCompilerReturnValue, string.Join(Environment.NewLine, result.Output.Cast<string>()));
-            }
+            string source = "public class " + typeName + " : IOTLinkAPI.Addons.AgentAddon { }";
+            var references = new[] { typeof(object).Assembly, Assembly.Load("System.Runtime"), typeof(AgentAddon).Assembly };
+            var compilation = CSharpCompilation.Create(Path.GetFileNameWithoutExtension(dll),
+                new[] { CSharpSyntaxTree.ParseText(source) },
+                references.Select(a => MetadataReference.CreateFromFile(a.Location)),
+                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            var result = compilation.Emit(dll);
+            Assert.IsTrue(result.Success, string.Join(Environment.NewLine, result.Diagnostics));
         }
     }
 }

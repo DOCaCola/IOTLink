@@ -1,6 +1,5 @@
 ﻿using System;
 using System.IO;
-using System.Reflection;
 
 namespace IOTLinkAPI.Helpers
 {
@@ -16,7 +15,7 @@ namespace IOTLinkAPI.Helpers
         /// <returns>String</returns>
         public static string BaseAppFullName()
         {
-            return Assembly.GetEntryAssembly().Location;
+            return Environment.ProcessPath;
         }
 
         /// <summary>
@@ -25,7 +24,7 @@ namespace IOTLinkAPI.Helpers
         /// <returns>String</returns>
         public static string BaseAppPath()
         {
-            return Path.GetDirectoryName(BaseAppFullName());
+            return Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
         }
 
         /// <summary>

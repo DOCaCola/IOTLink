@@ -12,14 +12,18 @@ IOT Link is a full featured service for connecting devices with IOT enabled serv
 - Widely customizable using [Addons](https://gitlab.com/iotlink/iotlink/wikis/Addons/Home).
 - Fully working as a **Windows Service** to provide reliable data as soon as the windows boot up, without having to wait for a windows user logon.
 
-### Requirements
+### Building the .NET 11 migration branch
 
-- Windows 10 with **administrator** rights.
-- [.NET Framework 4.7.2](https://dotnet.microsoft.com/download/dotnet-framework/net472)
-- Minimal understanding of YAML files.
-- **Observations:**
-  - It might work with other Windows version, however it has been developed and tested only on Windows 10 (Update 1803+).
-  - Please if you have it fully working on other Windows versions, inform it commenting on the following Issue: [Working Windows Versions](#2).
+The installer on this branch targets x64 Windows 10 build 19041 or later and includes the .NET runtime. Installing the Windows service requires administrator rights. The GitHub Releases link above provides the stable release.
+
+To build and test on Windows, install the .NET 11 SDK and run these commands from the repository root.
+
+```powershell
+dotnet build IOTLink.sln -c Release
+dotnet test IOTLink.sln -c Release --no-build
+```
+
+To package the service, agent and bundled add-ons, install Inno Setup 6 and run `./Build-Installer.ps1`. The installer is written to `Setup/`. The script accepts `-CompilerPath` for a custom Inno Setup installation.
 
 ### More Information.
 

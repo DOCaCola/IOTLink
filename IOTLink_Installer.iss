@@ -5,7 +5,9 @@
 #define APP_AGENT_NAME   "IOTLinkAgent.exe"
 #define APP_SERVICE_NAME "IOTLinkService.exe"
 #define APP_VERSION      "2.3.1"
-#define APP_BETA_VERSION ""
+#ifndef StageDir
+#error Build the installer with Build-Installer.ps1
+#endif
 
 #define APP_PUBLISHER "DOCaCola (IOTLink fork)"
 #define APP_URL "https://github.com/DOCaCola/IOTLink"
@@ -29,11 +31,9 @@ DefaultGroupName={#APP_NAME}
 UsePreviousAppDir=yes
 ; Setup Settings
 OutputDir=Setup
-#if APP_BETA_VERSION == ""
-OutputBaseFilename={#APP_DIR_NAME}_Installer_v{#APP_VERSION}
-#else
-OutputBaseFilename={#APP_DIR_NAME}_Installer_v{#APP_VERSION}-{#APP_BETA_VERSION}
-#endif
+OutputBaseFilename={#APP_DIR_NAME}_Installer_v{#APP_VERSION}-net11-win-x64
+ArchitecturesAllowed=x64
+MinVersion=10.0.19041
 WizardStyle=modern
 AllowNoIcons=yes
 LicenseFile=LICENSE.md
@@ -47,11 +47,7 @@ SetupIconFile=Assets\images\icons\application.ico
 
 [Files]
 ; Main Files
-Source: "Builds\Release\IOTLinkAgent.exe";                                     DestDir: "{app}"; DestName: "{#APP_AGENT_NAME}";          Flags: ignoreversion
-Source: "Builds\Release\IOTLinkAgent.exe.config";                              DestDir: "{app}"; DestName: "{#APP_AGENT_NAME}.config";   Flags: ignoreversion
-Source: "Builds\Release\IOTLinkService.exe";                                   DestDir: "{app}"; DestName: "{#APP_SERVICE_NAME}";        Flags: ignoreversion
-Source: "Builds\Release\IOTLinkService.exe.config";                            DestDir: "{app}"; DestName: "{#APP_SERVICE_NAME}.config"; Flags: ignoreversion
-Source: "Builds\Release\*.dll";                                                DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\app\*"; Excludes: "*.pdb"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 ; Configuration Sample
 Source: "Assets\config.yaml-sample";                                           DestDir: "{commonappdata}\{#APP_DIR_NAME}\Configs"; DestName: "configuration.yaml"; Flags: confirmoverwrite; Permissions: everyone-full
 ; Application Icon
@@ -69,19 +65,19 @@ Source: "Assets\images\icons\stop_service.ico";                                D
 
 ; Addon - Commands
 Source: "Addons\Commands\addon.yaml";                                          DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\Commands";       Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\Commands
-Source: "Addons\Commands\bin\Release\Commands.dll";                            DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\Commands";       Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\Commands
+Source: "{#StageDir}\addons\Commands\Commands.dll";                            DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\Commands";       Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\Commands
 Source: "Addons\Commands\Assets\*";                                            DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\Commands";       Flags: ignoreversion recursesubdirs;   Permissions: everyone-full;  Tasks: Addons\Commands
 
 ; Addon - Windows Monitor
 Source: "Addons\WindowsMonitor\addon.yaml";                                    DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
 Source: "Addons\WindowsMonitor\config.yaml";                                   DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: confirmoverwrite;               Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
-Source: "Addons\WindowsMonitor\bin\Release\WindowsMonitor.dll";                DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
+Source: "{#StageDir}\addons\WindowsMonitor\WindowsMonitor.dll";                DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
 Source: "Addons\WindowsMonitor\Assets\*";                                      DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\WindowsMonitor"; Flags: ignoreversion recursesubdirs;   Permissions: everyone-full;  Tasks: Addons\WindowsMonitor
 
 ; Addon - Process Monitor
 Source: "Addons\ProcessMonitor\addon.yaml";                                    DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
 Source: "Addons\ProcessMonitor\config.yaml";                                   DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: confirmoverwrite;               Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
-Source: "Addons\ProcessMonitor\bin\Release\ProcessMonitor.dll";                DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
+Source: "{#StageDir}\addons\ProcessMonitor\ProcessMonitor.dll";                DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: ignoreversion;                  Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
 Source: "Addons\ProcessMonitor\Assets\*";                                      DestDir: "{commonappdata}\{#APP_DIR_NAME}\Addons\ProcessMonitor"; Flags: ignoreversion recursesubdirs;   Permissions: everyone-full;  Tasks: Addons\ProcessMonitor
 
 [Icons]
@@ -96,14 +92,9 @@ Name: "{group}\Open Configuration File";      Filename: "{commonappdata}\{#APP_D
 Name: "{group}\Open Addons Folder";           Filename: "{commonappdata}\{#APP_DIR_NAME}\Addons";                        IconFilename: "{app}\Icons\addons.ico";             WorkingDir: "{commonappdata}\{#APP_DIR_NAME}\Addons";    Flags: foldershortcut
 Name: "{group}\Open Logs Folder";             Filename: "{commonappdata}\{#APP_DIR_NAME}\Logs";                          IconFilename: "{app}\Icons\logs.ico";               WorkingDir: "{commonappdata}\{#APP_DIR_NAME}\Logs";      Flags: foldershortcut
 
-[Run]
-Filename: "net.exe";                          Parameters: "stop {#APP_DIR_NAME}";  WorkingDir: "{app}"; Flags: runascurrentuser runhidden;             Description: "Stop {#APP_NAME} Service";       StatusMsg: "Stopping Windows Service"
-Filename: "{app}\{#APP_SERVICE_NAME}";        Parameters: "--install";             WorkingDir: "{app}"; Flags: runascurrentuser postinstall runhidden; Description: "Install {#APP_NAME} as Service"; StatusMsg: "Installing Windows Service"
-Filename: "net.exe";                          Parameters: "start {#APP_DIR_NAME}"; WorkingDir: "{app}"; Flags: runascurrentuser postinstall runhidden; Description: "Start {#APP_NAME} Service";      StatusMsg: "Starting Windows Service"
-
 [UninstallRun]
-Filename: "net.exe";                          Parameters: "stop {#APP_DIR_NAME}";       WorkingDir: "{app}"; Flags: runhidden;
-Filename: "{app}\{#APP_SERVICE_NAME}";        Parameters: "--uninstall";                WorkingDir: "{app}"; Flags: runhidden;
+Filename: "net.exe";                          Parameters: "stop {#APP_DIR_NAME}";       WorkingDir: "{app}"; Flags: runhidden; RunOnceId: "StopIOTLink"
+Filename: "{app}\{#APP_SERVICE_NAME}";        Parameters: "--uninstall quiet";                WorkingDir: "{app}"; Flags: runhidden; RunOnceId: "UnregisterIOTLink"
 
 [Dirs]
 Name: "{commonappdata}\{#APP_DIR_NAME}";            Permissions: everyone-full
@@ -121,6 +112,46 @@ Name: "Addons\WindowsMonitor";  Description: "Addon: Windows Monitor"
 Name: "Addons\ProcessMonitor";  Description: "Addon: Process Monitor"
 
 [Code]
+var
+  ExistingService: Boolean;
+
+function RunServiceCommand(Filename, Parameters: String): Boolean;
+var
+  ExitCode: Integer;
+begin
+  Result := Exec(ExpandConstant(Filename), Parameters, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+  if not Result then
+    Log(Format('%s %s failed (code %d)', [Filename, Parameters, ExitCode]));
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Locator, Wmi, Services, Service: Variant;
+begin
+  Result := '';
+  Locator := CreateOleObject('WbemScripting.SWbemLocator');
+  Wmi := Locator.ConnectServer('.', 'root\cimv2');
+  Services := Wmi.ExecQuery('SELECT State FROM Win32_Service WHERE Name = ''{#APP_DIR_NAME}''');
+  ExistingService := Services.Count > 0;
+  if ExistingService then begin
+    Service := Services.ItemIndex(0);
+    if Service.State <> 'Stopped' then
+      if not RunServiceCommand('{sys}\net.exe', 'stop {#APP_DIR_NAME}') then
+        Result := 'Could not stop the IOT Link service before replacing its files.';
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then begin
+    if ExistingService then begin
+      if not RunServiceCommand('{sys}\net.exe', 'start {#APP_DIR_NAME}') then
+        RaiseException('Could not restart the IOT Link service.');
+    end else if not RunServiceCommand('{app}\{#APP_SERVICE_NAME}', '--install quiet') then
+      RaiseException('Could not install the IOT Link service.');
+  end;
+end;
+
 procedure SetElevationBit(Filename: string);
 var
   Buffer: string;

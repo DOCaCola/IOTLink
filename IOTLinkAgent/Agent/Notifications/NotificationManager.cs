@@ -1,6 +1,5 @@
 ﻿using IOTLinkAgent.Agent.Loaders;
 using IOTLinkAPI.Helpers;
-using NotificationsExtensions.ToastContent;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -33,18 +32,16 @@ namespace IOTLinkAgent.Agent.Notifications
         {
             LoggerHelper.Verbose("NotificationManager - Displaying Notification");
 
-            var toast = ToastContentFactory.CreateToastImageAndText02();
-            toast.TextHeading.Text = ParseTitle(title);
-            toast.Image.Src = ParseIconUrl(iconUrl);
-            toast.TextBodyWrap.Text = message;
-            toast.Launch = launchParams;
+            var xml = ToastNotificationManager.GetTemplateContent(ToastTemplateType.ToastImageAndText02);
+            var text = xml.GetElementsByTagName("text");
+            text[0].InnerText = ParseTitle(title);
+            text[1].InnerText = message;
+            var image = (XmlElement)xml.GetElementsByTagName("image")[0];
+            image.SetAttribute("src", ParseIconUrl(iconUrl));
+            if (!string.IsNullOrEmpty(launchParams))
+                xml.DocumentElement.SetAttribute("launch", launchParams);
 
-            string xmlStr = toast.GetContent();
-            LoggerHelper.DataDump("Title: {0} | Message: {1} | Icon: {2} | LaunchParams: {3}", toast.TextHeading.Text, message, toast.Image.Src, launchParams);
-            LoggerHelper.DataDump("XML: {0}", xmlStr);
-
-            var xml = new XmlDocument();
-            xml.LoadXml(xmlStr);
+            LoggerHelper.DataDump("Notification XML: {0}", xml.GetXml());
             ShowToast(xml);
         }
 

@@ -1,9 +1,7 @@
 ﻿using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.Windows;
 using System;
-using System.Configuration.Install;
 using System.Linq;
-using System.Reflection;
 using System.ServiceProcess;
 
 namespace IOTLink.Service.Commands
@@ -25,18 +23,21 @@ namespace IOTLink.Service.Commands
                 return -1;
             }
 
+            bool quiet = args.Contains("quiet", StringComparer.OrdinalIgnoreCase);
             try
             {
                 bool serviceExists = ServiceController.GetServices().Any(s => s.ServiceName == "IOTLink");
                 if (!serviceExists)
                 {
                     LoggerHelper.Verbose("Command {0} - Service is currently not installed. Skipping", COMMAND_LINE);
-                    WindowsAPI.ShowMessage("Service Installer", "Service is currently not installed.");
+                    if (!quiet)
+                        WindowsAPI.ShowMessage("Service Installer", "Service is currently not installed.");
                     return -1;
                 }
 
-                ManagedInstallerClass.InstallHelper(new string[] { "/u", "/LogFile=", "/LogToConsole=false", Assembly.GetExecutingAssembly().Location });
-                WindowsAPI.ShowMessage("Service Installer", "Service is uninstalled sucessfully.");
+                ServiceRegistration.Uninstall();
+                if (!quiet)
+                    WindowsAPI.ShowMessage("Service Installer", "Service is uninstalled sucessfully.");
 
                 LoggerHelper.Verbose("Command {0} - Service is uninstalled sucessfully.", COMMAND_LINE);
                 return 0;
@@ -44,7 +45,8 @@ namespace IOTLink.Service.Commands
             catch (Exception ex)
             {
                 LoggerHelper.Error("Command {0} - Error while running command: {1}", COMMAND_LINE, ex.ToString());
-                WindowsAPI.ShowMessage("Service Installer", "Uninstall failed. Please, run as an administrator.");
+                if (!quiet)
+                    WindowsAPI.ShowMessage("Service Installer", "Uninstall failed. Please, run as an administrator.");
             }
 
             return -1;

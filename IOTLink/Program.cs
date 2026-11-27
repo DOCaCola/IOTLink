@@ -23,7 +23,10 @@ namespace IOTLink
         {
             AppDomain.CurrentDomain.UnhandledException += CurrentDomainUnhandledException;
 
-            if (!Environment.UserInteractive)
+            bool registrationCommand = args.Length > 0 &&
+                (args[0].Equals("--install", StringComparison.OrdinalIgnoreCase) ||
+                 args[0].Equals("--uninstall", StringComparison.OrdinalIgnoreCase));
+            if (!Environment.UserInteractive && !registrationCommand)
             {
                 // Running as a service
                 IsService = true;
