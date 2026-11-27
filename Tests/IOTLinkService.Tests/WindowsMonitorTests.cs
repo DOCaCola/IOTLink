@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Dynamic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using IOTLinkAddon.Service;
+using IOTLinkAddon.Service.Monitors;
 using IOTLinkAPI.Addons;
 using IOTLinkAPI.Configs;
 using IOTLinkAPI.Helpers;
@@ -19,6 +21,42 @@ namespace IOTLinkService.Tests
     [TestClass]
     public class WindowsMonitorTests
     {
+        [TestMethod]
+        public void DiskPollReadsCapacityOncePerFixedDriveAndPreservesQuotaLimitedFreeSpace()
+        {
+            const long gib = 1L << 30;
+            var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
+                .Select(d => d.Name).ToArray();
+            Assert.IsTrue(fixedDrives.Length > 0);
+            var reads = new List<string>();
+            long free = 33 * gib + gib / 2;
+            var monitor = new StorageMonitor((string root, out long available, out long total, out long totalFree) =>
+            {
+                reads.Add(root);
+                available = 7 * gib;
+                total = 100 * gib;
+                totalFree = free;
+                return true;
+            });
+
+            for (int poll = 0; poll < 2; poll++)
+            {
+                reads.Clear();
+                var items = monitor.GetMonitorItems(null, 10).ToDictionary(item => item.Topic, item => item.Value);
+                CollectionAssert.AreEquivalent(fixedDrives, reads);
+                foreach (var root in fixedDrives)
+                {
+                    string topic = $"Stats/HardDrive/{root[0]}/";
+                    Assert.AreEqual(100 * gib, items[topic + "TotalSize"]);
+                    Assert.AreEqual(7 * gib, items[topic + "AvailableFreeSpace"]);
+                    Assert.AreEqual(free, items[topic + "TotalFreeSpace"]);
+                    Assert.AreEqual(100 * gib - free, items[topic + "UsedSpace"]);
+                    Assert.AreEqual(66 - poll, items[topic + "DriveUsage"]);
+                }
+                free += gib;
+            }
+        }
+
         [TestMethod]
         public void CurrentUserFallsBackToSystemWhenTheConsoleOrSessionIsUnavailable()
         {

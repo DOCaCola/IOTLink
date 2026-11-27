@@ -1,15 +1,28 @@
 ﻿using IOTLinkAPI.Configs;
 using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.HomeAssistant;
+using IOTLinkAPI.Platform.Windows.Native;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace IOTLinkAddon.Service.Monitors
 {
     class StorageMonitor : BaseMonitor
     {
         private static readonly string CONFIG_KEY = "HardDrive";
+
+        internal delegate bool ReadDiskSpace(string rootPath, out long availableFreeSpace, out long totalSize, out long totalFreeSpace);
+        private readonly ReadDiskSpace _readDiskSpace;
+
+        public StorageMonitor() : this(Kernel32.GetDiskFreeSpaceExW) { }
+
+        internal StorageMonitor(ReadDiskSpace readDiskSpace)
+        {
+            _readDiskSpace = readDiskSpace;
+        }
 
         public override string GetConfigKey()
         {
@@ -22,16 +35,23 @@ namespace IOTLinkAddon.Service.Monitors
 
             foreach (DriveInfo driveInfo in DriveInfo.GetDrives())
             {
-                if (driveInfo == null || !driveInfo.IsReady || driveInfo.DriveType != DriveType.Fixed)
+                if (driveInfo == null || driveInfo.DriveType != DriveType.Fixed || !driveInfo.IsReady)
                     continue;
 
                 try
                 {
+                    if (!_readDiskSpace(driveInfo.Name, out long availableFreeSpace, out long totalSize, out long totalFreeSpace))
+                    {
+                        var error = new Win32Exception(Marshal.GetLastWin32Error());
+                        LoggerHelper.Error("Could not read disk capacity for {0}: {1}", driveInfo.Name, error.Message);
+                        continue;
+                    }
+
                     string drive = driveInfo.Name.Remove(1, 2);
                     string topic = string.Format("Stats/HardDrive/{0}", drive);
 
-                    long usedSpace = driveInfo.TotalSize - driveInfo.TotalFreeSpace;
-                    int driveUsage = (int)((100.0 / driveInfo.TotalSize) * usedSpace);
+                    long usedSpace = totalSize - totalFreeSpace;
+                    int driveUsage = (int)((100.0 / totalSize) * usedSpace);
 
                     // Total Size
                     result.Add(new MonitorItem
@@ -39,7 +59,7 @@ namespace IOTLinkAddon.Service.Monitors
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_DISK_SIZE,
                         Topic = topic + "/TotalSize",
-                        Value = driveInfo.TotalSize,
+                        Value = totalSize,
                         DiscoveryOptions = new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
@@ -56,7 +76,7 @@ namespace IOTLinkAddon.Service.Monitors
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_DISK_SIZE,
                         Topic = topic + "/AvailableFreeSpace",
-                        Value = driveInfo.AvailableFreeSpace,
+                        Value = availableFreeSpace,
                         DiscoveryOptions = new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
@@ -73,7 +93,7 @@ namespace IOTLinkAddon.Service.Monitors
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_DISK_SIZE,
                         Topic = topic + "/TotalFreeSpace",
-                        Value = driveInfo.TotalFreeSpace,
+                        Value = totalFreeSpace,
                         DiscoveryOptions = new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,

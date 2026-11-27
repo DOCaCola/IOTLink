@@ -33,6 +33,10 @@ namespace IOTLinkAPI.Platform.Windows.Native
         [DllImport("kernel32.dll")]
         public static extern ulong GetTickCount64();
 
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        public static extern bool GetDiskFreeSpaceExW(string directoryName, out long freeBytesAvailableToCaller,
+            out long totalNumberOfBytes, out long totalNumberOfFreeBytes);
+
         [DllImport("kernel32.dll", EntryPoint = "CloseHandle", CharSet = CharSet.Auto)]
         public static extern bool CloseHandle(IntPtr hHandle);
 
