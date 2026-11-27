@@ -50,7 +50,7 @@ namespace IOTLinkAPI.Platform.Windows
                     {
                         ScreenWidth = desktop.DesktopWidth,
                         ScreenHeight = desktop.DesktopHeight,
-                        MonitorName = string.IsNullOrWhiteSpace(name) ? null : name,
+                        MonitorName = string.IsNullOrWhiteSpace(name) ? GetAdapterDisplayName(source.DeviceName) : name,
                         ConnectorType = GetConnectorType(path.Target.OutputTechnology),
                         Rotation = GetRotationDegrees(path.Target.Rotation),
                         RefreshRate = rate.Hertz,
@@ -74,6 +74,18 @@ namespace IOTLinkAPI.Platform.Windows
                     pair.Value.HdrEnabled = hdr;
             }
             return result;
+        }
+
+        internal static string GetAdapterDisplayName(string sourceName)
+        {
+            // Match the logical display, since other adapters can belong to unrelated monitors.
+            var device = new DisplayDevice { Size = Marshal.SizeOf<DisplayDevice>() };
+            for (uint index = 0; EnumDisplayDevicesW(null, index, ref device, 0); index++)
+            {
+                if (string.Equals(device.DeviceName, sourceName, StringComparison.OrdinalIgnoreCase))
+                    return string.IsNullOrWhiteSpace(device.DeviceString) ? null : device.DeviceString;
+            }
+            return null;
         }
 
         internal static ModeInfo GetMode(ModeInfo[] modes, uint count, uint pathFlags, uint index)
@@ -210,6 +222,17 @@ namespace IOTLinkAPI.Platform.Windows
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct DisplayDevice
+        {
+            public int Size;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+            public uint StateFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceId;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct TargetName
         {
             public DeviceHeader Header;
@@ -234,6 +257,9 @@ namespace IOTLinkAPI.Platform.Windows
 
         [DllImport("user32.dll")]
         private static extern int GetDisplayConfigBufferSizes(uint flags, out uint pathCount, out uint modeCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern bool EnumDisplayDevicesW(string deviceName, uint index, ref DisplayDevice device, uint flags);
 
         [DllImport("user32.dll")]
         private static extern int QueryDisplayConfig(uint flags, ref uint pathCount, [Out] PathInfo[] paths,

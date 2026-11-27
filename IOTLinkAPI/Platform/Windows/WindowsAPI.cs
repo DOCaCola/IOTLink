@@ -515,7 +515,7 @@ namespace IOTLinkAPI.Platform.Windows
                 if (User32.GetMonitorInfo(hMonitor, ref mi))
                 {
                     if (!modes.TryGetValue(mi.DeviceName, out DisplayInfo di))
-                        di = new DisplayInfo();
+                        di = new DisplayInfo { MonitorName = DisplayConfiguration.GetAdapterDisplayName(mi.DeviceName) };
                     if (di.ScreenWidth == 0 || di.ScreenHeight == 0)
                     {
                         di.ScreenWidth = mi.Monitor.Right - mi.Monitor.Left;
