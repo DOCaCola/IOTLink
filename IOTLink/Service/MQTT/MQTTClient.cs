@@ -24,6 +24,7 @@ namespace IOTLinkService.Service.MQTT
         private string _globalTopicPrefix;
         private string _lastWillTopic;
         private DiscoveryIdentity _discoveryIdentity;
+        private readonly AddonTopicCache _addonTopics = new AddonTopicCache();
 
         private sealed class DiscoveryIdentity
         {
@@ -288,7 +289,7 @@ namespace IOTLinkService.Service.MQTT
         /// </summary>
         /// <param name="topic">String containg the topic</param>
         /// <param name="message">String containg the message</param>
-        internal void PublishMessage(string topic, string message)
+        internal void PublishMessage(string topic, string message, string addonId)
         {
             if (_client == null || !_client.IsConnected)
             {
@@ -302,7 +303,7 @@ namespace IOTLinkService.Service.MQTT
                 return;
             }
 
-            topic = MQTTHelper.AppendTopic(_machineTopicPrefix, topic);
+            topic = _machineTopicPrefix + _addonTopics.GetSuffix(addonId, topic);
             if (message == null)
                 message = string.Empty;
 
@@ -312,7 +313,7 @@ namespace IOTLinkService.Service.MQTT
             _client.PublishAsync(mqttMsg).GetAwaiter().GetResult();
         }
 
-        internal void PublishDiscoveryMessage(string stateTopic, string preffixName, HassDiscoveryOptions discoveryOptions)
+        internal void PublishDiscoveryMessage(string stateTopic, string preffixName, HassDiscoveryOptions discoveryOptions, string addonId)
         {
             if (_client == null || !_client.IsConnected)
             {
@@ -320,13 +321,14 @@ namespace IOTLinkService.Service.MQTT
                 return;
             }
 
+            string suffix = _addonTopics.GetSuffix(addonId, stateTopic, register: true);
             if (_discoveryIdentity == null)
             {
                 LoggerHelper.Verbose("MQTTClient::PublishDiscoveryMessage() - MQTT Discovery Disabled");
                 return;
             }
 
-            var topic = MQTTHelper.AppendTopic(_machineTopicPrefix, stateTopic);
+            var topic = _machineTopicPrefix + suffix;
             var uniqueId = string.Format("{0}_{1}_{2}", _discoveryIdentity.EntityIdPrefix, preffixName, discoveryOptions.Id).Replace(" ", "_").ToLower();
             var discoveryJson = new HassDiscoveryJsonClass()
             {
@@ -389,7 +391,7 @@ namespace IOTLinkService.Service.MQTT
         /// </summary>
         /// <param name="topic">String containg the topic</param>
         /// <param name="message">Message bytes[]</param>
-        internal void PublishMessage(string topic, byte[] message)
+        internal void PublishMessage(string topic, byte[] message, string addonId)
         {
             if (_client == null || !_client.IsConnected)
             {
@@ -403,7 +405,7 @@ namespace IOTLinkService.Service.MQTT
                 return;
             }
 
-            topic = MQTTHelper.AppendTopic(_machineTopicPrefix, topic);
+            topic = _machineTopicPrefix + _addonTopics.GetSuffix(addonId, topic);
             if (message == null)
                 message = new byte[] { };
 

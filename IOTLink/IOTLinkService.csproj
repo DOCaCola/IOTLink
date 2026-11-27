@@ -112,6 +112,7 @@
     <Compile Include="Service\Engine\TopicSubscriptionInfo.cs" />
     <Compile Include="Service\Loaders\AssemblyLoader.cs" />
     <Compile Include="Service\Engine\ServiceMain.cs" />
+    <Compile Include="Service\MQTT\AddonTopicCache.cs" />
     <Compile Include="Service\MQTT\MQTTClient.cs" />
     <Compile Include="Service\MQTT\MQTTClientManager.cs" />
     <Compile Include="Service\WebSockets\Server\WebSocketClient.cs" />

@@ -15,6 +15,39 @@ namespace IOTLinkService.Tests
     public class MqttTopicTests
     {
         [TestMethod]
+        public void OnlyDiscoveredTopicsReuseSuffixesAndEachAddonHasItsOwnNamespace()
+        {
+            var topics = new AddonTopicCache();
+            const string addon = "WindowsMonitor";
+            const string sensor = "Stats/HardDrive/C/AvailableFreeSpace";
+            const string expected = "windows-monitor/stats/hard-drive/c/available-free-space";
+            Assert.AreEqual(expected, topics.GetSuffix(addon, sensor));
+            string known = topics.GetSuffix(addon, sensor, register: true);
+            Assert.AreEqual(expected, known);
+            Assert.AreSame(known, topics.GetSuffix(addon, sensor));
+            Assert.AreSame(known, topics.GetSuffix(addon, sensor, register: true));
+            Assert.AreEqual("other/stats/hard-drive/c/available-free-space", topics.GetSuffix("Other", sensor));
+
+            for (int i = 0; i < AddonTopicCache.Capacity + 1; i++)
+                Assert.AreEqual($"windows-monitor/stats/etage_2//{i}/", topics.GetSuffix(addon, $"Stats/Étage 2//{i}/"));
+            Assert.AreSame(known, topics.GetSuffix(addon, sensor));
+            Assert.AreEqual("_raw/topic", topics.GetSuffix(null, " Raw/Topic "));
+        }
+
+        [TestMethod]
+        public void NewDiscoveriesCanReplaceOldSuffixesWithoutChangingTheirTopics()
+        {
+            var topics = new AddonTopicCache();
+            string first = topics.GetSuffix("Addon", "Stats/FirstSensor", register: true);
+            for (int i = 0; i < AddonTopicCache.Capacity; i++)
+                topics.GetSuffix("Addon", $"Stats/Sensor/{i}", register: true);
+
+            string evicted = topics.GetSuffix("Addon", "Stats/FirstSensor");
+            Assert.AreEqual(first, evicted);
+            Assert.AreNotSame(first, evicted);
+        }
+
+        [TestMethod]
         public void AppendingToNormalizedPrefixPreservesFullTopic()
         {
             const string prefix = "  Télémétrie /Étage//";

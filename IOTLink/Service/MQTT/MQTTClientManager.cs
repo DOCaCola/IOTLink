@@ -121,7 +121,7 @@ namespace IOTLinkService.Service.MQTT
             }
         }
 
-        internal void PublishMessage(string addonTopic, string message)
+        internal void PublishMessage(string addonTopic, string message, string addonId = null)
         {
             lock (publishLock)
             {
@@ -129,7 +129,7 @@ namespace IOTLinkService.Service.MQTT
 
                 try
                 {
-                    _mqttClient?.PublishMessage(addonTopic, message);
+                    _mqttClient?.PublishMessage(addonTopic, message, addonId);
                 }
                 catch (Exception ex)
                 {
@@ -139,7 +139,7 @@ namespace IOTLinkService.Service.MQTT
             }
         }
 
-        internal void PublishMessage(string topic, byte[] message)
+        internal void PublishMessage(string topic, byte[] message, string addonId = null)
         {
             lock (publishLock)
             {
@@ -147,7 +147,7 @@ namespace IOTLinkService.Service.MQTT
 
                 try
                 {
-                    _mqttClient?.PublishMessage(topic, message);
+                    _mqttClient?.PublishMessage(topic, message, addonId);
                 }
                 catch (Exception ex)
                 {
@@ -157,7 +157,7 @@ namespace IOTLinkService.Service.MQTT
             }
         }
 
-        internal void PublishDiscoveryMessage(string addonTopic, string preffixName, HassDiscoveryOptions discoveryOptions)
+        internal void PublishDiscoveryMessage(string addonTopic, string preffixName, HassDiscoveryOptions discoveryOptions, string addonId = null)
         {
             lock (publishLock)
             {
@@ -165,7 +165,7 @@ namespace IOTLinkService.Service.MQTT
 
                 try
                 {
-                    _mqttClient?.PublishDiscoveryMessage(addonTopic, preffixName, discoveryOptions);
+                    _mqttClient?.PublishDiscoveryMessage(addonTopic, preffixName, discoveryOptions, addonId);
                 }
                 catch (Exception ex)
                 {

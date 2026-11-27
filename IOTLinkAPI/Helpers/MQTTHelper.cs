@@ -64,8 +64,13 @@ namespace IOTLinkAPI.Helpers
         /// <summary>Append a relative topic to a normalized prefix that includes the trailing slash.</summary>
         public static string AppendTopic(string normalizedPrefix, string name)
         {
+            return normalizedPrefix + NormalizeTopicSuffix(name);
+        }
+
+        public static string NormalizeTopicSuffix(string name)
+        {
             // Leading spaces in the suffix are inside the full topic and become underscores.
-            return normalizedPrefix + SanitizeTopicLevels(name?.TrimEnd());
+            return SanitizeTopicLevels(name?.TrimEnd());
         }
 
         private static string SanitizeTopicLevels(string topic)

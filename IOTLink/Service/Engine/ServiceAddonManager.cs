@@ -101,8 +101,7 @@ namespace IOTLinkService.Service.Engine
             if (sender == null || string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(message))
                 return;
 
-            string addonTopic = BuildTopicName(sender, topic);
-            MQTTClientManager.GetInstance().PublishMessage(addonTopic, message);
+            MQTTClientManager.GetInstance().PublishMessage(topic, message, sender.GetAppInfo().AddonId ?? string.Empty);
         }
 
         public void PublishDiscoveryMessage(ServiceAddon sender, string topic, string preffixName, HassDiscoveryOptions discoveryOptions)
@@ -110,8 +109,7 @@ namespace IOTLinkService.Service.Engine
             if (sender == null || string.IsNullOrWhiteSpace(discoveryOptions.Name))
                 return;
 
-            string addonTopic = BuildTopicName(sender, topic);
-            MQTTClientManager.GetInstance().PublishDiscoveryMessage(addonTopic, preffixName, discoveryOptions);
+            MQTTClientManager.GetInstance().PublishDiscoveryMessage(topic, preffixName, discoveryOptions, sender.GetAppInfo().AddonId ?? string.Empty);
         }
 
         /// <summary>
@@ -125,8 +123,7 @@ namespace IOTLinkService.Service.Engine
             if (sender == null || string.IsNullOrWhiteSpace(topic))
                 return;
 
-            string addonTopic = BuildTopicName(sender, topic);
-            MQTTClientManager.GetInstance().PublishMessage(addonTopic, message);
+            MQTTClientManager.GetInstance().PublishMessage(topic, message, sender.GetAppInfo().AddonId ?? string.Empty);
         }
 
         /// <summary>
@@ -407,9 +404,7 @@ namespace IOTLinkService.Service.Engine
             if (addon == null)
                 return string.Empty;
 
-            topic = topic.Split('/').Select(x => StringHelper.PascalToKebabCase(x)).Aggregate((x, y) => x + '/' + y);
-            string addonId = StringHelper.PascalToKebabCase(addon.GetAppInfo().AddonId);
-            return MQTTHelper.SanitizeTopic(string.Format("{0}/{1}", addonId, topic));
+            return AddonTopicCache.FormatAddonTopic(addon.GetAppInfo().AddonId, topic);
         }
 
         /// <summary>
