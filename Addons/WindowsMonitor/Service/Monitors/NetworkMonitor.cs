@@ -2,17 +2,87 @@
 using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform;
 using IOTLinkAPI.Platform.HomeAssistant;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Net.NetworkInformation;
+using System.Threading;
 
 namespace IOTLinkAddon.Service.Monitors
 {
-    class NetworkMonitor : BaseMonitor
+    class NetworkMonitor : BaseMonitor, IDisposable
     {
         private static readonly string CONFIG_KEY = "NetworkInfo";
 
-        // Store how much was transferred last time, initialized to prevent null reference exception
-        private long[] _lastBytesSent = new long[0];
-        private long[] _lastBytesReceived = new long[0];
+        private readonly Func<IEnumerable<NetworkAdapter>> _discover;
+        private readonly Func<long> _getTimestamp;
+        private List<NetworkAdapter> _adapters = new List<NetworkAdapter>();
+        private Dictionary<string, NetworkInfo> _previous = new Dictionary<string, NetworkInfo>();
+        private int _refreshRequested = 1;
+        private long _lastRefresh;
+        private bool _subscribed;
+
+        public NetworkMonitor() : this(NetworkAdapter.Discover, Stopwatch.GetTimestamp) { }
+
+        internal NetworkMonitor(Func<IEnumerable<NetworkAdapter>> discover, Func<long> getTimestamp)
+        {
+            _discover = discover;
+            _getTimestamp = getTimestamp;
+        }
+
+        public override void Init()
+        {
+            if (_subscribed)
+                return;
+
+            NetworkChange.NetworkAddressChanged += OnNetworkChanged;
+            NetworkChange.NetworkAvailabilityChanged += OnNetworkChanged;
+            _subscribed = true;
+        }
+
+        public void Dispose()
+        {
+            if (_subscribed)
+            {
+                NetworkChange.NetworkAddressChanged -= OnNetworkChanged;
+                NetworkChange.NetworkAvailabilityChanged -= OnNetworkChanged;
+                _subscribed = false;
+            }
+            _adapters.Clear();
+            _previous.Clear();
+            RequestRefresh();
+        }
+
+        private void OnNetworkChanged(object sender, EventArgs args) => RequestRefresh();
+
+        internal void RequestRefresh() => Interlocked.Exchange(ref _refreshRequested, 1);
+
+        private void RefreshAdapters()
+        {
+            long now = _getTimestamp();
+            // Consume the notification before discovery so a change during discovery survives.
+            if (Interlocked.Exchange(ref _refreshRequested, 0) == 0 && now - _lastRefresh < 60L * Stopwatch.Frequency)
+                return;
+
+            try
+            {
+                var adapters = _discover().ToList();
+                var retained = new Dictionary<string, NetworkInfo>(adapters.Count);
+                foreach (var adapter in adapters)
+                    if (_previous.TryGetValue(adapter.Id, out var sample))
+                        retained.Add(adapter.Id, sample);
+
+                _adapters = adapters;
+                _previous = retained;
+                _lastRefresh = now;
+            }
+            catch (NetworkInformationException ex)
+            {
+                LoggerHelper.Error("Error refreshing network adapters: {0}", ex.Message);
+                RequestRefresh();
+            }
+        }
 
         public override string GetConfigKey()
         {
@@ -23,25 +93,25 @@ namespace IOTLinkAddon.Service.Monitors
         {
             List<MonitorItem> result = new List<MonitorItem>();
 
-            List<NetworkInfo> networks = PlatformHelper.GetNetworkInfos();
-
-            //Make sure the array for the lastBytes values are as big as numbers of networks
-            //By being checked every time, we should be able to handle like a wifi dongle installed while running
-            if (_lastBytesReceived.Length != networks.Count)
+            RefreshAdapters();
+            for (int i = 0; i < _adapters.Count; i++)
             {
-                _lastBytesReceived = new long[networks.Count];
-                _lastBytesSent = new long[networks.Count];
-            }
+                var adapter = _adapters[i];
+                NetworkInfo networkInfo;
+                try
+                {
+                    networkInfo = adapter.Read();
+                }
+                catch (NetworkInformationException ex)
+                {
+                    LoggerHelper.Error("Error reading network adapter {0}: {1}", adapter.Id, ex.Message);
+                    _previous.Remove(adapter.Id);
+                    RequestRefresh();
+                    continue;
+                }
 
-            for (var i = 0; i < networks.Count; i++)
-            {
-                NetworkInfo networkInfo = networks[i];
-                if (networkInfo == null)
-                    continue; // Shouldn't happen, but...
-
-                var bytesSentPerSecond = CalculateBytesPerSecond(networkInfo.BytesSent, ref _lastBytesSent[i], interval);
-                var bytesReceivedPerSecond = CalculateBytesPerSecond(networkInfo.BytesReceived, ref _lastBytesReceived[i], interval);
-
+                _previous.TryGetValue(adapter.Id, out var previous);
+                _previous[adapter.Id] = networkInfo;
                 var topic = $"Stats/Network/{i}";
 
                 // IPv4
@@ -149,14 +219,14 @@ namespace IOTLinkAddon.Service.Monitors
                 });
 
                 // Bytes Sent per second
-                if (bytesSentPerSecond >= 0)
+                if (previous != null && networkInfo.BytesSent >= previous.BytesSent)
                 {
                     result.Add(new MonitorItem
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_NETWORK_SPEED,
                         Topic = topic + "/BytesSentPerSecond",
-                        Value = bytesSentPerSecond,
+                        Value = (networkInfo.BytesSent - previous.BytesSent) / interval,
                         DiscoveryOptions = new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
@@ -168,14 +238,14 @@ namespace IOTLinkAddon.Service.Monitors
                 }
 
                 // Bytes Received per second
-                if (bytesSentPerSecond >= 0)
+                if (previous != null && networkInfo.BytesReceived >= previous.BytesReceived)
                 {
                     result.Add(new MonitorItem
                     {
                         ConfigKey = CONFIG_KEY,
                         Type = MonitorItemType.TYPE_NETWORK_SPEED,
                         Topic = topic + "/BytesReceivedPerSecond",
-                        Value = bytesReceivedPerSecond,
+                        Value = (networkInfo.BytesReceived - previous.BytesReceived) / interval,
                         DiscoveryOptions = new HassDiscoveryOptions()
                         {
                             Component = HomeAssistantComponent.Sensor,
@@ -187,17 +257,6 @@ namespace IOTLinkAddon.Service.Monitors
                 }
             }
             return result;
-        }
-
-        private long CalculateBytesPerSecond(long bytesReceived, ref long lastBytes, int interval)
-        {
-            var bytesPerSecond = -1L;
-
-            if (lastBytes != 0)
-                bytesPerSecond = (bytesReceived - lastBytes) / interval;
-
-            lastBytes = bytesReceived;
-            return bytesPerSecond;
         }
     }
 }

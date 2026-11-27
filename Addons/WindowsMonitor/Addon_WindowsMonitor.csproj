@@ -57,6 +57,7 @@
   <ItemGroup>
     <Compile Include="Agent\WindowsMonitorAgent.cs" />
     <Compile Include="Common\AddonRequestType.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Service\MonitorItem.cs" />
     <Compile Include="Service\MonitorItemType.cs" />
     <Compile Include="Service\Monitors\BaseMonitor.cs" />

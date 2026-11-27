@@ -143,6 +143,7 @@
     <Compile Include="Platform\HomeAssistant\HomeAssistantComponent.cs" />
     <Compile Include="Platform\MemoryInfo.cs" />
     <Compile Include="Platform\NetworkInfo.cs" />
+    <Compile Include="Platform\NetworkAdapter.cs" />
     <Compile Include="Platform\ProcessInfo.cs" />
     <Compile Include="Platform\ProcessInfoEntry.cs" />
     <Compile Include="Platform\RunInfo.cs" />

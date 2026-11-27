@@ -4,9 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
 namespace IOTLinkAPI.Helpers
@@ -288,68 +285,8 @@ namespace IOTLinkAPI.Helpers
 
             try
             {
-                NetworkInterface[] networkInterfaces = NetworkInterface.GetAllNetworkInterfaces();
-                foreach (NetworkInterface network in networkInterfaces)
-                {
-                    // This shouldn't be possible, but appears to happen sometimes.
-                    if (network == null)
-                        continue;
-
-                    // Skip disabled or disconnected network(s)
-                    if (network.OperationalStatus != OperationalStatus.Up)
-                        continue;
-
-                    // Skip virtual network(s)
-                    if (network.Description != null && (network.Description.ToLowerInvariant().Contains("virtual") || network.Description.ToLowerInvariant().Contains("pseudo")))
-                        continue;
-
-                    // Skip network(s) without properties
-                    var properties = network.GetIPProperties();
-                    if (properties == null)
-                        continue;
-
-                    // Skip network(s) which aren't LAN or WLAN
-                    if (network.NetworkInterfaceType != NetworkInterfaceType.Ethernet && network.NetworkInterfaceType != NetworkInterfaceType.Wireless80211)
-                        continue;
-
-                    var networkInfo = new NetworkInfo
-                    {
-                        Wired = network.NetworkInterfaceType == NetworkInterfaceType.Ethernet,
-                        Speed = network.Speed / 1000000,
-                        BytesReceived = 0L,
-                        BytesSent = 0L
-                    };
-
-                    if (network.GetIPStatistics() != null)
-                    {
-                        networkInfo.BytesReceived = network.GetIPStatistics().BytesReceived;
-                        networkInfo.BytesSent = network.GetIPStatistics().BytesSent;
-                    }
-
-                    foreach (UnicastIPAddressInformation address in properties.UnicastAddresses)
-                    {
-                        if (address.Address == null)
-                            continue;
-
-                        var family = address.Address.AddressFamily;
-                        if (family != AddressFamily.InterNetwork && family != AddressFamily.InterNetworkV6)
-                            continue;
-
-                        if (IPAddress.IsLoopback(address.Address))
-                            continue;
-
-                        if (family == AddressFamily.InterNetwork)
-                            networkInfo.IPv4Address = address.Address.ToString();
-                        else if (networkInfo.IPv6Address == null)
-                            networkInfo.IPv6Address = address.Address.ToString();
-                    }
-
-                    // Skip network(s) without IP Address(es)
-                    if (string.IsNullOrWhiteSpace(networkInfo.IPv4Address) && string.IsNullOrWhiteSpace(networkInfo.IPv6Address))
-                        continue;
-
-                    networks.Add(networkInfo);
-                }
+                foreach (var adapter in NetworkAdapter.Discover())
+                    networks.Add(adapter.Read());
             }
             catch (Exception ex)
             {
