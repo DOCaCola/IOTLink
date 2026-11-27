@@ -1,8 +1,11 @@
 ﻿using IOTLinkAddon.Common;
 using IOTLinkAPI.Addons;
+using IOTLinkAPI.Configs;
 using IOTLinkAPI.Helpers;
+using IOTLinkAPI.Platform;
 using IOTLinkAPI.Platform.Events;
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Dynamic;
@@ -13,21 +16,48 @@ namespace IOTLinkAddon.Agent
 {
     public class WindowsMonitorAgent : AgentAddon, IDisposable
     {
-        private readonly DisplayInfoCache _displays = new DisplayInfoCache();
+        private readonly DisplayInfoCache _displays;
+        private string _configPath;
 
-        public void Dispose() => _displays.Dispose();
+        public WindowsMonitorAgent() => _displays = new DisplayInfoCache(SendDisplayInfo);
+
+        public void Dispose()
+        {
+            _displays.Dispose();
+            if (_configPath != null)
+                ConfigurationManager.GetInstance().RemoveReloadHandler(_configPath, OnConfigReload);
+        }
 
         public override void Init(IAddonManager addonManager)
         {
             base.Init(addonManager);
 
-            OnConfigReloadHandler += OnConfigReload;
-            OnAgentRequestHandler += OnAgentRequest;
+            _configPath = Path.Combine(_currentPath, "config.yaml");
+            var configs = ConfigurationManager.GetInstance();
+            configs.GetConfiguration(_configPath);
+            configs.SetReloadHandler(_configPath, OnConfigReload);
+            try
+            {
+                ApplyDisplayConfiguration();
+                OnAgentRequestHandler += OnAgentRequest;
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
         }
 
         private void OnConfigReload(object sender, ConfigReloadEventArgs e)
         {
-            LoggerHelper.Verbose("WindowsMonitorAgent::OnConfigReload");
+            ApplyDisplayConfiguration();
+        }
+
+        private void ApplyDisplayConfiguration()
+        {
+            var config = ConfigurationManager.GetInstance().GetConfiguration(_configPath);
+            _displays.SetEnabled(config?.GetValue("enabled", false) == true &&
+                config.GetValue("monitors:Display-Info:enabled", false));
         }
 
         private void OnAgentRequest(object sender, AgentAddonRequestEventArgs e)
@@ -42,7 +72,7 @@ namespace IOTLinkAddon.Agent
                     break;
 
                 case AddonRequestType.REQUEST_DISPLAY_INFORMATION:
-                    SendDisplayInfo();
+                    _displays.Refresh(true);
                     break;
 
                 case AddonRequestType.REQUEST_DISPLAY_SCREENSHOT:
@@ -61,11 +91,8 @@ namespace IOTLinkAddon.Agent
             GetManager().SendAgentResponse(this, addonData);
         }
 
-        private void SendDisplayInfo()
+        private void SendDisplayInfo(List<DisplayInfo> displays)
         {
-            var displays = _displays.Get();
-            if (displays == null)
-                return;
             dynamic addonData = new ExpandoObject();
             addonData.requestType = AddonRequestType.REQUEST_DISPLAY_INFORMATION;
             addonData.requestData = displays;

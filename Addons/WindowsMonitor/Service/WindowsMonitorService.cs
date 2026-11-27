@@ -92,6 +92,9 @@ namespace IOTLinkAddon.Service
                 DateTimeFormat = ResolveFormat("dateTimeFormat", DEFAULT_FORMAT_DATETIME);
             }
 
+            public bool PollAgent(AddonRequestType type) =>
+                Enabled && type != AddonRequestType.REQUEST_DISPLAY_INFORMATION;
+
             public bool IsDue(uint counter) => Enabled && counter % Interval == 0;
         }
 
@@ -101,6 +104,7 @@ namespace IOTLinkAddon.Service
         private readonly HashSet<string> _discoveredTopics = new HashSet<string>(StringComparer.Ordinal);
 
         private readonly IMonitor[] monitors;
+        private IMonitor[] _polledMonitors;
 
         public WindowsMonitorService() : this(
             new CPUMonitor(), new MemoryMonitor(), new PowerMonitor(), new NetworkMonitor(),
@@ -159,10 +163,18 @@ namespace IOTLinkAddon.Service
                 }
             }
 
+            _polledMonitors = _enabled ? monitors.Where(NeedsPolling).ToArray() : Array.Empty<IMonitor>();
             if (!_enabled)
                 _monitorCounter = 0;
 
             RefreshMonitoring(sendValues);
+        }
+
+        private bool NeedsPolling(IMonitor monitor)
+        {
+            if (monitor is not DisplayMonitor && GetMonitorSettings(monitor.GetConfigKey()).Enabled)
+                return true;
+            return monitor.GetAgentRequests()?.Any(entry => GetMonitorSettings(entry.Key).PollAgent(entry.Value)) == true;
         }
 
         private void StopPolling()
@@ -178,12 +190,18 @@ namespace IOTLinkAddon.Service
             if (!_enabled || _mqttDisconnected)
                 return;
 
-            _monitorTimer = new Timer(1000) { AutoReset = false };
-            _monitorTimer.Elapsed += OnMonitorTimerElapsed;
-            _monitorTimer.Start();
+            if (_polledMonitors.Length > 0)
+            {
+                _monitorTimer = new Timer(1000) { AutoReset = false };
+                _monitorTimer.Elapsed += OnMonitorTimerElapsed;
+                _monitorTimer.Start();
+            }
             SetupDiscovery();
             if (sendValues)
                 SendAllInformation();
+            // Request the display snapshot even when the service has no periodic sensors.
+            if (GetMonitorSettings("Display-Info").Enabled)
+                RequestAgent(AddonRequestType.REQUEST_DISPLAY_INFORMATION);
         }
 
         private void SetupDiscovery()
@@ -282,8 +300,15 @@ namespace IOTLinkAddon.Service
 
         private void SendAllInformation()
         {
-            foreach (IMonitor monitor in monitors)
+            foreach (IMonitor monitor in _polledMonitors)
                 ExecuteMonitor(monitor);
+        }
+
+        private void RequestAgent(AddonRequestType type)
+        {
+            dynamic data = new ExpandoObject();
+            data.requestType = type;
+            GetManager().SendAgentRequest(this, data);
         }
 
         private void ExecuteMonitor(IMonitor monitor)
@@ -296,15 +321,13 @@ namespace IOTLinkAddon.Service
                 {
                     foreach (KeyValuePair<string, AddonRequestType> entry in agentRequests)
                     {
-                        if (!GetMonitorSettings(entry.Key).IsDue(_monitorCounter))
+                        var settings = GetMonitorSettings(entry.Key);
+                        if (!settings.PollAgent(entry.Value) || !settings.IsDue(_monitorCounter))
                             continue;
 
                         LoggerHelper.Debug("WindowsMonitorService::ExecuteMonitor({0}) - Agent {1} - Request information ({2})", monitor.GetConfigKey(), entry.Key, entry.Value.ToString());
 
-                        dynamic addonData = new ExpandoObject();
-                        addonData.requestType = entry.Value;
-
-                        GetManager().SendAgentRequest(this, addonData);
+                        RequestAgent(entry.Value);
                     }
                 }
             }
@@ -386,7 +409,8 @@ namespace IOTLinkAddon.Service
                     return;
             }
 
-            SendMonitorValue(item.Topic, value, settings.Cacheable);
+            bool retained = item.Type == MonitorItemType.TYPE_RETAINED_STATE;
+            SendMonitorValue(item.Topic, value, settings.Cacheable || retained, retained);
         }
 
         private void PublishDiscoveryItem(MonitorItem item)
@@ -394,7 +418,8 @@ namespace IOTLinkAddon.Service
             if (item?.CreateDiscoveryOptions == null || string.IsNullOrWhiteSpace(item.Topic))
                 return;
 
-            if (_discoveredTopics.Contains(item.Topic))
+            string key = item.DiscoveryKey ?? item.Topic;
+            if (_discoveredTopics.Contains(key))
                 return;
 
             var options = item.CreateDiscoveryOptions(item);
@@ -404,7 +429,7 @@ namespace IOTLinkAddon.Service
             options.Name = GetDiscoveryOption(item.ConfigKey, options.Id, "name", options.Name);
 
             GetManager().PublishDiscoveryMessage(this, item.Topic, item.ConfigKey, options);
-            _discoveredTopics.Add(item.Topic);
+            _discoveredTopics.Add(key);
         }
 
         private string FormatDateObject(object value, string format)
@@ -422,7 +447,7 @@ namespace IOTLinkAddon.Service
         {
             lock (_monitorLock)
             {
-                if (_enabled)
+                if (_enabled && !_mqttDisconnected)
                     HandleAgentResponse(e);
             }
         }
@@ -479,7 +504,7 @@ namespace IOTLinkAddon.Service
             return value;
         }
 
-        private void SendMonitorValue(string topic, string value, bool cacheable)
+        private void SendMonitorValue(string topic, string value, bool cacheable, bool retained)
         {
             if (string.IsNullOrWhiteSpace(topic))
                 return;
@@ -492,7 +517,10 @@ namespace IOTLinkAddon.Service
                 _cache[topic] = value;
             }
 
-            GetManager().PublishMessage(this, topic, value);
+            if (retained)
+                GetManager().PublishRetainedMessage(this, topic, value);
+            else
+                GetManager().PublishMessage(this, topic, value);
         }
     }
 }

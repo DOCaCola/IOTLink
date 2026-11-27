@@ -4,7 +4,8 @@ using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform;
 using IOTLinkAPI.Platform.HomeAssistant;
 using System.Collections.Generic;
-using System.Globalization;
+using System.Linq;
+using Newtonsoft.Json;
 
 namespace IOTLinkAddon.Service.Monitors
 {
@@ -34,7 +35,7 @@ namespace IOTLinkAddon.Service.Monitors
             switch (type)
             {
                 case AddonRequestType.REQUEST_DISPLAY_INFORMATION:
-                    return ParseDisplayInformation(data, username);
+                    return ParseDisplayInformation(data);
 
                 case AddonRequestType.REQUEST_DISPLAY_SCREENSHOT:
                     return ParseDisplayScreenshot(data, username);
@@ -45,179 +46,69 @@ namespace IOTLinkAddon.Service.Monitors
             return null;
         }
 
-        private List<MonitorItem> ParseDisplayInformation(dynamic data, string username)
+        internal const string StateTopic = "Stats/Display/State";
+
+        // Keep the discovery ID suffixes stable across topic changes.
+        private static readonly (string Field, string Id, string Label, string Icon, string Unit, bool Binary)[] Sensors =
         {
-            List<MonitorItem> result = new List<MonitorItem>();
+            ("screenWidth", "Width", "Width", "mdi:monitor", null, false),
+            ("screenHeight", "Height", "Height", "mdi:monitor", null, false),
+            ("signalWidth", "SignalWidth", "Signal Width", "mdi:monitor", "px", false),
+            ("signalHeight", "SignalHeight", "Signal Height", "mdi:monitor", "px", false),
+            ("monitorName", "MonitorName", "Monitor Name", "mdi:monitor", null, false),
+            ("refreshRate", "RefreshRate", "Refresh Rate", "mdi:monitor", "Hz", false),
+            ("hdrEnabled", "HdrEnabled", "HDR Enabled", "mdi:hdr", null, true),
+            ("primaryDisplay", "PrimaryDisplay", "Primary Display", "mdi:monitor-star", null, true),
+            ("connectorType", "ConnectorType", "Connector Type", "mdi:connection", null, false),
+            ("rotation", "Rotation", "Rotation", "mdi:screen-rotation", "°", false)
+        };
 
-            LoggerHelper.Verbose("DisplayMonitor - Received Display Informations");
-            List<DisplayInfo> displayInfos = data.requestData.ToObject<List<DisplayInfo>>();
-            for (var i = 0; i < displayInfos.Count; i++)
+        private static List<MonitorItem> ParseDisplayInformation(dynamic data)
+        {
+            List<DisplayInfo> displays = data.requestData.ToObject<List<DisplayInfo>>();
+            var items = new List<MonitorItem>();
+            for (int i = 0; i < displays.Count; i++)
             {
-                DisplayInfo displayInfo = displayInfos[i];
-
-                string index = i.ToString();
-                string topic = $"Stats/Display/{index}";
-
-                result.Add(new MonitorItem(index)
+                int index = i;
+                foreach (var sensor in Sensors)
                 {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/ScreenWidth",
-                    Value = displayInfo.ScreenWidth,
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
+                    string id = $"Screen_{index}_{sensor.Id}";
+                    items.Add(new MonitorItem
                     {
-                        Id = $"Screen_{item.InstanceId}_Width",
-                        Name = $"Screen #{item.InstanceId} - Width",
-                        Component = HomeAssistantComponent.Sensor,
-                        Icon = "mdi:monitor"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/ScreenHeight",
-                    Value = displayInfo.ScreenHeight,
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                    {
-                        Id = $"Screen_{item.InstanceId}_Height",
-                        Name = $"Screen #{item.InstanceId} - Height",
-                        Component = HomeAssistantComponent.Sensor,
-                        Icon = "mdi:monitor"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/SignalWidth",
-                    Value = displayInfo.SignalWidth?.ToString(CultureInfo.InvariantCulture) ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_SignalWidth",
-                        Name = $"Screen #{item.InstanceId} - Signal Width",
-                        Component = HomeAssistantComponent.Sensor,
-                        Unit = "px",
-                        Icon = "mdi:monitor"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/SignalHeight",
-                    Value = displayInfo.SignalHeight?.ToString(CultureInfo.InvariantCulture) ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_SignalHeight",
-                        Name = $"Screen #{item.InstanceId} - Signal Height",
-                        Component = HomeAssistantComponent.Sensor,
-                        Unit = "px",
-                        Icon = "mdi:monitor"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/MonitorName",
-                    Value = displayInfo.MonitorName ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_MonitorName",
-                        Name = $"Screen #{item.InstanceId} - Monitor Name",
-                        Component = HomeAssistantComponent.Sensor,
-                        Icon = "mdi:monitor"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/RefreshRate",
-                    Value = displayInfo.RefreshRate?.ToString("0.###", CultureInfo.InvariantCulture) ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_RefreshRate",
-                        Name = $"Screen #{item.InstanceId} - Refresh Rate",
-                        Component = HomeAssistantComponent.Sensor,
-                        Unit = "Hz",
-                        Icon = "mdi:monitor"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/HdrEnabled",
-                    Value = displayInfo.HdrEnabled?.ToString() ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_HdrEnabled",
-                        Name = $"Screen #{item.InstanceId} - HDR Enabled",
-                        Component = HomeAssistantComponent.BinarySensor,
-                        PayloadOn = "True",
-                        PayloadOff = "False",
-                        Icon = "mdi:hdr"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/PrimaryDisplay",
-                    Value = displayInfo.IsPrimaryDisplay()?.ToString() ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_PrimaryDisplay",
-                        Name = $"Screen #{item.InstanceId} - Primary Display",
-                        Component = HomeAssistantComponent.BinarySensor,
-                        PayloadOn = "True",
-                        PayloadOff = "False",
-                        Icon = "mdi:monitor-star"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/ConnectorType",
-                    Value = displayInfo.ConnectorType ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_ConnectorType",
-                        Name = $"Screen #{item.InstanceId} - Connector Type",
-                        Component = HomeAssistantComponent.Sensor,
-                        Icon = "mdi:connection"
-                    }
-                });
-
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY_INFO,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/Rotation",
-                    Value = displayInfo.Rotation?.ToString(CultureInfo.InvariantCulture) ?? "None",
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
-                    {
-                        Id = $"Screen_{item.InstanceId}_Rotation",
-                        Name = $"Screen #{item.InstanceId} - Rotation",
-                        Component = HomeAssistantComponent.Sensor,
-                        Unit = "°",
-                        Icon = "mdi:screen-rotation"
-                    }
-                });
+                        ConfigKey = CONFIG_KEY_INFO,
+                        Topic = StateTopic,
+                        DiscoveryKey = id,
+                        CreateDiscoveryOptions = _ => new HassDiscoveryOptions
+                        {
+                            Id = id,
+                            Name = $"Screen #{index} - {sensor.Label}",
+                            Component = sensor.Binary ? HomeAssistantComponent.BinarySensor : HomeAssistantComponent.Sensor,
+                            Icon = sensor.Icon,
+                            Unit = sensor.Unit,
+                            PayloadOn = sensor.Binary ? "True" : null,
+                            PayloadOff = sensor.Binary ? "False" : null,
+                            ValueTemplate = "{{ value_json.displays[" + index + "]." + sensor.Field +
+                                " if value_json.displays | length > " + index + " else none }}"
+                        }
+                    });
+                }
             }
 
-            return result;
+            items.Add(new MonitorItem
+            {
+                ConfigKey = CONFIG_KEY_INFO,
+                Topic = StateTopic,
+                Type = MonitorItemType.TYPE_RETAINED_STATE,
+                Value = JsonConvert.SerializeObject(new { displays = displays.Select(d => new
+                {
+                    screenWidth = d.ScreenWidth, screenHeight = d.ScreenHeight,
+                    signalWidth = d.SignalWidth, signalHeight = d.SignalHeight,
+                    monitorName = d.MonitorName, refreshRate = d.RefreshRate,
+                    hdrEnabled = d.HdrEnabled, primaryDisplay = d.IsPrimaryDisplay(),
+                    connectorType = d.ConnectorType, rotation = d.Rotation
+                }) })
+            });
+            return items;
         }
 
         private List<MonitorItem> ParseDisplayScreenshot(dynamic data, string username)

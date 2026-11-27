@@ -96,12 +96,16 @@ namespace IOTLinkService.Service.Engine
         /// <param name="sender">Origin <see cref="AddonInfo">Addon</see></param>
         /// <param name="topic">MQTT Topic</param>
         /// <param name="message">String containing the message</param>
-        public void PublishMessage(ServiceAddon sender, string topic, string message)
+        public void PublishMessage(ServiceAddon sender, string topic, string message) => PublishText(sender, topic, message, false);
+
+        public void PublishRetainedMessage(ServiceAddon sender, string topic, string message) => PublishText(sender, topic, message, true);
+
+        private static void PublishText(ServiceAddon sender, string topic, string message, bool forceRetain)
         {
             if (sender == null || string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(message))
                 return;
 
-            MQTTClientManager.GetInstance().PublishMessage(topic, message, sender.GetAppInfo().AddonId ?? string.Empty);
+            MQTTClientManager.GetInstance().PublishMessage(topic, message, sender.GetAppInfo().AddonId ?? string.Empty, forceRetain);
         }
 
         public void PublishDiscoveryMessage(ServiceAddon sender, string topic, string preffixName, HassDiscoveryOptions discoveryOptions)

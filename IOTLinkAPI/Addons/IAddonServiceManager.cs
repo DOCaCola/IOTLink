@@ -13,6 +13,8 @@ namespace IOTLinkAPI.Addons
 
         void PublishMessage(ServiceAddon sender, string topic, string message);
 
+        void PublishRetainedMessage(ServiceAddon sender, string topic, string message);
+
         void PublishDiscoveryMessage(ServiceAddon sender, string topic, string preffixName, HassDiscoveryOptions discoveryOptions);
 
         void PublishMessage(ServiceAddon sender, string topic, byte[] message);

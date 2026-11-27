@@ -55,6 +55,8 @@ formats:
 # Uptime            : Uptime information (Boot time, Uptime).
 # Display-Info      : Desktop and signal dimensions, monitor name, refresh rate (Hz), HDR state,
 #                     primary display flag, connector type, and clockwise rotation (degrees) per display.
+#                     One retained JSON snapshot for all displays on windows-monitor/stats/display/state.
+#                     Changes publish as detected. The displays array is empty when no displays are connected.
 # Display-Screenshot: Screenshot (Per Display) - Recommended > 60 secs.
 ############################################################################
 monitors:
@@ -93,8 +95,6 @@ monitors:
     cacheable: true
   Display-Info:
     enabled: true
-    interval: 60
-    cacheable: true
   Display-Screenshot:
     enabled: false
     interval: 60

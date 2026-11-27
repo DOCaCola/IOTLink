@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -15,37 +16,50 @@ namespace IOTLinkService.Tests
     public class DisplayMonitorTests
     {
         [TestMethod]
-        public void PollsReuseSnapshotUntilDisplayNotificationOrGraphicsConfigurationChange()
+        public void AgentPushesDisplayAndHdrChangesWithoutAServiceRequest()
         {
-            int reads = 0, releases = 0;
+            int reads = 0, publishes = 0, releases = 0;
             bool current = true;
+            using var sent = new AutoResetEvent(false);
             DisplayInfoCache cache = null;
             cache = new DisplayInfoCache(() =>
             {
                 if (++reads == 1)
-                    cache.Invalidate(); // A change delivered during enumeration must survive.
-                current = true;
-                return new List<DisplayInfo>();
-            }, () => current, () => releases++);
-
+                    cache.Invalidate(); // A notification during enumeration must survive.
+                Volatile.Write(ref current, true);
+                return new List<DisplayInfo> { new DisplayInfo { HdrEnabled = reads >= 3 } };
+            }, () => Volatile.Read(ref current), () => releases++, displays =>
+            {
+                Interlocked.Increment(ref publishes);
+                if (displays[0].HdrEnabled == true) sent.Set();
+            });
             using (cache)
             {
-                var first = cache.Get();
-                var second = cache.Get();
-                Assert.AreNotSame(first, second);
-                for (int i = 0; i < 100; i++)
-                    Assert.AreSame(second, cache.Get());
-                current = false; // HDR-only change without a resolution notification.
-                Assert.AreNotSame(second, cache.Get());
+                cache.SetEnabled(true);
+                Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref publishes) == 2, 5000));
+                for (int i = 0; i < 100; i++) cache.Refresh(false);
+                Assert.AreEqual(2, reads);
+                Assert.AreEqual(2, publishes);
+
+                Volatile.Write(ref current, false); // HDR-only change, no display notification.
+                Assert.IsTrue(sent.WaitOne(5000));
+                Assert.AreEqual(3, reads);
+                cache.Refresh(true); // Discovery refresh serves the cached snapshot.
+                Assert.AreEqual(3, reads);
+                Assert.AreEqual(4, publishes);
+
+                cache.SetEnabled(false);
                 cache.Invalidate();
-                cache.Invalidate();
-                cache.Get();
-                Assert.AreEqual(4, reads);
+                cache.Refresh(true);
+                Assert.AreEqual(4, publishes);
+                Assert.AreEqual(1, releases);
+                cache.SetEnabled(true);
+                Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref publishes) == 5, 5000));
             }
-            cache.Dispose();
-            Assert.AreEqual(1, releases);
-            Assert.IsNull(cache.Get());
-            Assert.AreEqual(4, reads);
+            cache.SetEnabled(true);
+            cache.Refresh(true);
+            Assert.AreEqual(5, publishes);
+            Assert.AreEqual(2, releases);
         }
 
         [TestMethod]
@@ -108,7 +122,7 @@ namespace IOTLinkService.Tests
         }
 
         [TestMethod]
-        public void AgentResponsePreservesDesktopAndSignalSizesAndDiscoversPerDisplayTopics()
+        public void AllDisplaysShareOneTypedSnapshotAndKeepTheirDiscoveryIds()
         {
             var rows = new JArray(
                 new JObject { ["ScreenWidth"] = 1920, ["ScreenHeight"] = 1080, ["SignalWidth"] = 3840,
@@ -122,34 +136,38 @@ namespace IOTLinkService.Tests
                 CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
                 var monitor = new DisplayMonitor();
                 var items = monitor.OnAgentResponse(null, monitor.GetAgentRequests()[monitor.GetConfigKey()],
-                    new JObject { ["requestData"] = rows }, "sample").ToDictionary(item => item.Topic);
-                const string tv = "Stats/Display/0/", legacy = "Stats/Display/1/";
-                Assert.AreEqual(1920, items[tv + "ScreenWidth"].Value);
-                Assert.AreEqual(1080, items[tv + "ScreenHeight"].Value);
-                Assert.AreEqual("3840", items[tv + "SignalWidth"].Value);
-                Assert.AreEqual("2160", items[tv + "SignalHeight"].Value);
-                Assert.AreEqual("Living Room TV", items[tv + "MonitorName"].Value);
-                var rate = items[tv + "RefreshRate"];
-                Assert.AreEqual("59.94", rate.Value);
-                Assert.AreEqual("Hz", rate.CreateDiscoveryOptions(rate).Unit);
-                var hdr = items[tv + "HdrEnabled"];
-                var discovery = hdr.CreateDiscoveryOptions(hdr);
-                Assert.AreEqual(HomeAssistantComponent.BinarySensor, discovery.Component);
-                Assert.AreEqual(discovery.PayloadOn, hdr.Value);
-                Assert.AreEqual(discovery.PayloadOff, items["Stats/Display/2/HdrEnabled"].Value);
-                var primary = items[tv + "PrimaryDisplay"];
-                var primaryDiscovery = primary.CreateDiscoveryOptions(primary);
-                Assert.AreEqual(HomeAssistantComponent.BinarySensor, primaryDiscovery.Component);
-                Assert.AreEqual(primaryDiscovery.PayloadOff, primary.Value);
-                Assert.AreEqual(primaryDiscovery.PayloadOn, items["Stats/Display/2/PrimaryDisplay"].Value);
-                var connector = items[tv + "ConnectorType"];
-                Assert.AreEqual("HDMI", connector.Value);
-                Assert.AreEqual(HomeAssistantComponent.Sensor, connector.CreateDiscoveryOptions(connector).Component);
-                var rotation = items[tv + "Rotation"];
-                Assert.AreEqual("90", rotation.Value);
-                Assert.AreEqual("°", rotation.CreateDiscoveryOptions(rotation).Unit);
-                foreach (string suffix in new[] { "SignalWidth", "SignalHeight", "MonitorName", "RefreshRate", "HdrEnabled", "PrimaryDisplay", "ConnectorType", "Rotation" })
-                    Assert.AreEqual("None", items[legacy + suffix].Value);
+                    new JObject { ["requestData"] = rows }, "sample");
+                Assert.IsTrue(items.All(item => item.Topic == "Stats/Display/State"));
+                var state = items.Single(item => item.Value != null);
+                var displays = (JArray)JObject.Parse((string)state.Value)["displays"];
+                Assert.AreEqual(3, displays.Count);
+                var tv = displays[0];
+                Assert.AreEqual(1920, (int)tv["screenWidth"]);
+                Assert.AreEqual(1080, (int)tv["screenHeight"]);
+                Assert.AreEqual(3840, (int)tv["signalWidth"]);
+                Assert.AreEqual(2160, (int)tv["signalHeight"]);
+                Assert.AreEqual(60000d / 1001, (double)tv["refreshRate"]);
+                Assert.AreEqual("Living Room TV", (string)tv["monitorName"]);
+                Assert.AreEqual("HDMI", (string)tv["connectorType"]);
+                Assert.AreEqual(90, (int)tv["rotation"]);
+                Assert.IsTrue((bool)tv["hdrEnabled"]);
+                Assert.IsFalse((bool)tv["primaryDisplay"]);
+                Assert.AreEqual(JTokenType.Null, displays[1]["hdrEnabled"].Type);
+                Assert.IsTrue((bool)displays[2]["primaryDisplay"]);
+
+                var entities = items.Where(item => item.CreateDiscoveryOptions != null)
+                    .ToDictionary(item => item.DiscoveryKey, item => item.CreateDiscoveryOptions(item));
+                Assert.AreEqual(30, entities.Count);
+                for (int i = 0; i < displays.Count; i++)
+                {
+                    foreach (var field in ((JObject)displays[i]).Properties())
+                        Assert.AreEqual(1, entities.Values.Count(entity => entity.ValueTemplate.Contains($"displays[{i}].{field.Name} ")));
+                }
+                Assert.AreEqual("Screen_0_Width", entities["Screen_0_Width"].Id);
+                Assert.AreEqual("Hz", entities["Screen_0_RefreshRate"].Unit);
+                Assert.AreEqual(HomeAssistantComponent.BinarySensor, entities["Screen_0_HdrEnabled"].Component);
+                Assert.AreEqual("True", entities["Screen_0_HdrEnabled"].PayloadOn);
+                Assert.AreEqual("False", entities["Screen_2_PrimaryDisplay"].PayloadOff);
             }
             finally { CultureInfo.CurrentCulture = culture; }
         }

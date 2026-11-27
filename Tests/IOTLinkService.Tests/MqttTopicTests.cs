@@ -1,3 +1,11 @@
+using System;
+using System.Linq;
+using System.Text;
+using IOTLinkAddon.Service.Monitors;
+using MQTTnet.Client;
+using MQTTnet.Client.Options;
+using MQTTnet.Server;
+using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -97,6 +105,58 @@ namespace IOTLinkService.Tests
                     CollectionAssert.AreEqual(new[] { "capteur/a", "capteur/b", "capteur/c", "capteur/d" }, received);
                 }
             }
+        }
+
+        [TestMethod]
+        [Timeout(30000)]
+        public async Task LateSubscriberReceivesDisplaySnapshotWhenNormalMessagesAreNotRetained()
+        {
+            int port;
+            using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+            {
+                socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                port = ((IPEndPoint)socket.LocalEndPoint).Port;
+            }
+            var factory = new MqttFactory();
+            using var broker = factory.CreateMqttServer();
+            await broker.StartAsync(new MqttServerOptionsBuilder().WithDefaultEndpoint().WithDefaultEndpointPort(port)
+                .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback).WithDefaultEndpointBoundIPV6Address(IPAddress.IPv6Loopback).Build());
+            var config = new MqttConfig
+            {
+                TCP = new MqttConfig.TCPConfig { Enabled = true, Hostname = "127.0.0.1", Port = port },
+                Prefix = "test", MaxPendingMessages = 64,
+                Messages = new MqttConfig.MsgConfig { Retain = false },
+                Discovery = new MqttConfig.DiscoveryConfig { Enabled = true, TopicPrefix = "homeassistant" }
+            };
+            using var manager = new MQTTClientManager(() => config, () => factory.CreateManagedMqttClient());
+            var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            manager.OnMQTTConnected += (_, _) => connected.TrySetResult();
+            manager.Start();
+            await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var monitor = new DisplayMonitor();
+            var items = monitor.OnAgentResponse(null, monitor.GetAgentRequests()[monitor.GetConfigKey()],
+                new JObject { ["requestData"] = new JArray(new JObject { ["HdrEnabled"] = true }) }, "test");
+            foreach (var item in items.Where(i => i.CreateDiscoveryOptions != null))
+                manager.PublishDiscoveryMessage(item.Topic, item.ConfigKey, item.CreateDiscoveryOptions(item), "WindowsMonitor");
+            var snapshot = items.Single(i => i.Value != null);
+            manager.PublishMessage(snapshot.Topic, (string)snapshot.Value, "WindowsMonitor", forceRetain: true);
+            string topic = MQTTHelper.GetFullTopicName(config.Prefix) + "windows-monitor/stats/display/state";
+            using var deadline = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while ((await broker.GetRetainedApplicationMessagesAsync()).Count < 11)
+                await Task.Delay(20, deadline.Token);
+            var retained = await broker.GetRetainedApplicationMessagesAsync();
+            Assert.AreEqual(11, retained.Count);
+            foreach (var message in retained.Where(m => m.Topic.StartsWith("homeassistant/")))
+                Assert.AreEqual(topic, (string)JObject.Parse(Encoding.UTF8.GetString(message.Payload))["state_topic"]);
+
+            using var subscriber = factory.CreateMqttClient();
+            var received = new TaskCompletionSource<MqttApplicationMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.UseApplicationMessageReceivedHandler(e => { received.TrySetResult(e.ApplicationMessage); });
+            await subscriber.ConnectAsync(new MqttClientOptionsBuilder().WithTcpServer("127.0.0.1", port).Build());
+            await subscriber.SubscribeAsync(topic);
+            var replay = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.IsTrue(replay.Retain);
+            Assert.AreEqual(snapshot.Value, Encoding.UTF8.GetString(replay.Payload));
         }
 
         private static Task Receive(IManagedMqttClient client, string topic)

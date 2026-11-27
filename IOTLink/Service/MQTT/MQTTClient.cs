@@ -289,7 +289,7 @@ namespace IOTLinkService.Service.MQTT
         /// </summary>
         /// <param name="topic">String containg the topic</param>
         /// <param name="message">String containg the message</param>
-        internal void PublishMessage(string topic, string message, string addonId)
+        internal void PublishMessage(string topic, string message, string addonId, bool forceRetain = false)
         {
             if (_client == null || !_client.IsConnected)
             {
@@ -310,6 +310,8 @@ namespace IOTLinkService.Service.MQTT
             LoggerHelper.Trace("MQTTClient::PublishMessage() - Publishing to {0}: {1}", topic, message);
 
             MqttApplicationMessage mqttMsg = BuildMQTTMessage(topic, Encoding.UTF8.GetBytes(message), _config.Messages);
+            if (forceRetain)
+                mqttMsg.Retain = true;
             _client.PublishAsync(mqttMsg).GetAwaiter().GetResult();
         }
 

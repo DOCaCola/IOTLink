@@ -1,3 +1,4 @@
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -21,6 +22,58 @@ namespace IOTLinkService.Tests
     [TestClass]
     public class WindowsMonitorTests
     {
+        [TestMethod]
+        public void CachedDisplayPublishesHdrChangesAndOnlyRequestsSnapshotsOnRefresh()
+        {
+            string directory = Directory.CreateTempSubdirectory().FullName;
+            string path = Path.Combine(directory, "config.yaml");
+            var service = new WindowsMonitorService();
+            var manager = new RecordingManager();
+            try
+            {
+                File.WriteAllText(path, """
+                    enabled: true
+                    monitors:
+                      Display-Info: { enabled: true, interval: 1, cacheable: false }
+                    """);
+                service.SetCurrentPath(directory);
+                service.SetAddonInfo(new AddonInfo { AddonId = "WindowsMonitor" });
+                service.Init(manager);
+                Assert.AreEqual(1, manager.Requests.Count);
+                Assert.IsFalse(SpinWait.SpinUntil(() => manager.Requests.Count > 1, 2200));
+                var display = new JObject { ["HdrEnabled"] = false };
+                var reply = new AgentAddonResponseEventArgs { Username = "test", Data = new JObject {
+                    ["requestType"] = 1, ["requestData"] = new JArray(display) } };
+                service.Raise_OnAgentResponse(this, reply);
+                const string topic = "Stats/Display/State";
+                Assert.AreEqual(1, manager.Values);
+                Assert.AreEqual(10, manager.Discoveries);
+                Assert.IsFalse((bool)JObject.Parse(manager.LastValues[topic])["displays"][0]["hdrEnabled"]);
+                display["HdrEnabled"] = true;
+                service.Raise_OnAgentResponse(this, reply);
+                service.Raise_OnAgentResponse(this, reply);
+                Assert.IsTrue((bool)JObject.Parse(manager.LastValues[topic])["displays"][0]["hdrEnabled"]);
+                Assert.AreEqual(2, manager.Values);
+                ((JArray)reply.Data.requestData).Clear();
+                service.Raise_OnAgentResponse(this, reply);
+                Assert.AreEqual(0, ((JArray)JObject.Parse(manager.LastValues[topic])["displays"]).Count);
+                Assert.AreEqual(3, manager.Retained);
+                CollectionAssert.AreEqual(new[] { topic }, manager.LastValues.Keys.ToArray());
+                service.Raise_OnMQTTDisconnected(this, null);
+                display["HdrEnabled"] = false;
+                service.Raise_OnAgentResponse(this, reply);
+                Assert.AreEqual(3, manager.Values);
+                service.Raise_OnMQTTConnected(this, null);
+                service.Raise_OnRefreshRequested(this, EventArgs.Empty);
+                CollectionAssert.AreEqual(new[] { 1, 1, 1 }, manager.Requests.ToArray());
+            }
+            finally
+            {
+                service.Raise_OnMQTTDisconnected(this, null);
+                Directory.Delete(directory, true);
+            }
+        }
+
         [TestMethod]
         public void DiskPollReadsCapacityOncePerFixedDriveAndPreservesQuotaLimitedFreeSpace()
         {
@@ -195,7 +248,7 @@ namespace IOTLinkService.Tests
             var manager = new RecordingManager();
             var configs = ConfigurationManager.GetInstance();
             const int idleTimeRequest = 0;
-            const int displayInfoRequest = 1;
+            const int screenshotRequest = 2;
             dynamic data = new ExpandoObject();
             data.requestType = idleTimeRequest;
             data.requestData = 17;
@@ -208,13 +261,13 @@ namespace IOTLinkService.Tests
                 {
                     File.WriteAllText(path, "enabled: true\nmonitors:\n" +
                         "  IdleTime: { enabled: true, interval: 3600, cacheable: true }\n" +
-                        "  Display-Info: { enabled: true, interval: 1 }\n");
+                        "  Display-Screenshot: { enabled: true, interval: 1 }\n");
                     service.SetCurrentPath(directory);
                     service.SetAddonInfo(new AddonInfo { AddonId = "WindowsMonitor" });
                     service.Init(manager);
                     configs.SetReloadHandler(path, onReload);
 
-                    Assert.IsTrue(SpinWait.SpinUntil(() => manager.Requests.Count(r => r == displayInfoRequest) >= 2, 5000));
+                    Assert.IsTrue(SpinWait.SpinUntil(() => manager.Requests.Count(r => r == screenshotRequest) >= 2, 5000));
                     Assert.AreEqual(1, manager.Requests.Count(r => r == idleTimeRequest));
                     service.Raise_OnAgentResponse(this, reply);
                     service.Raise_OnAgentResponse(this, reply);
@@ -223,9 +276,9 @@ namespace IOTLinkService.Tests
                     File.WriteAllText(path, "enabled: true\nmonitors:\n  IdleTime: { enabled: true, interval: 1 }\n");
                     Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)), "Sensor settings were not reloaded");
                     int idleBefore = manager.Requests.Count(r => r == idleTimeRequest);
-                    int displayBefore = manager.Requests.Count(r => r == displayInfoRequest);
+                    int displayBefore = manager.Requests.Count(r => r == screenshotRequest);
                     Assert.IsTrue(SpinWait.SpinUntil(() => manager.Requests.Count(r => r == idleTimeRequest) >= idleBefore + 2, 5000));
-                    Assert.AreEqual(displayBefore, manager.Requests.Count(r => r == displayInfoRequest), "Removed sensor kept polling");
+                    Assert.AreEqual(displayBefore, manager.Requests.Count(r => r == screenshotRequest), "Removed sensor kept polling");
                     service.Raise_OnAgentResponse(this, reply);
                     service.Raise_OnAgentResponse(this, reply);
                     Assert.AreEqual(3, manager.Values, "Removing cacheable should publish both replies");
@@ -318,7 +371,7 @@ namespace IOTLinkService.Tests
 
         private sealed class RecordingManager : IAddonServiceManager
         {
-            public int Discoveries, Values;
+            public int Discoveries, Values, Retained;
             public readonly ConcurrentDictionary<string, string> LastValues = new ConcurrentDictionary<string, string>();
             public readonly ConcurrentDictionary<string, HassDiscoveryOptions> LastDiscovery = new ConcurrentDictionary<string, HassDiscoveryOptions>();
             public readonly ConcurrentQueue<int> Requests = new ConcurrentQueue<int>();
@@ -333,6 +386,11 @@ namespace IOTLinkService.Tests
             {
                 LastValues[topic] = message;
                 Interlocked.Increment(ref Values);
+            }
+            public void PublishRetainedMessage(ServiceAddon sender, string topic, string message)
+            {
+                Interlocked.Increment(ref Retained);
+                PublishMessage(sender, topic, message);
             }
             public void PublishMessage(ServiceAddon sender, string topic, byte[] message) => Interlocked.Increment(ref Values);
             public void SendAgentRequest(ServiceAddon sender, dynamic addonData, string username = null) => Requests.Enqueue((int)addonData.requestType);

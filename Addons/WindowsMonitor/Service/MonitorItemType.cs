@@ -11,6 +11,7 @@
         TYPE_DATE,
         TYPE_TIME,
         TYPE_DATETIME,
-        TYPE_UPTIME
+        TYPE_UPTIME,
+        TYPE_RETAINED_STATE
     }
 }

@@ -121,7 +121,7 @@ namespace IOTLinkService.Service.MQTT
             }
         }
 
-        internal void PublishMessage(string addonTopic, string message, string addonId = null)
+        internal void PublishMessage(string addonTopic, string message, string addonId = null, bool forceRetain = false)
         {
             lock (publishLock)
             {
@@ -129,7 +129,7 @@ namespace IOTLinkService.Service.MQTT
 
                 try
                 {
-                    _mqttClient?.PublishMessage(addonTopic, message, addonId);
+                    _mqttClient?.PublishMessage(addonTopic, message, addonId, forceRetain);
                 }
                 catch (Exception ex)
                 {
