@@ -58,10 +58,22 @@ namespace IOTLinkAPI.Helpers
         /// <returns>String containing the MQTT topic path</returns>
         public static string SanitizeTopic(string topic)
         {
-            if (string.IsNullOrWhiteSpace(topic))
+            return SanitizeTopicLevels(topic?.Trim());
+        }
+
+        /// <summary>Append a relative topic to a normalized prefix that includes the trailing slash.</summary>
+        public static string AppendTopic(string normalizedPrefix, string name)
+        {
+            // Leading spaces in the suffix are inside the full topic and become underscores.
+            return normalizedPrefix + SanitizeTopicLevels(name?.TrimEnd());
+        }
+
+        private static string SanitizeTopicLevels(string topic)
+        {
+            if (string.IsNullOrEmpty(topic))
                 return string.Empty;
 
-            topic = topic.Replace("\\\\", "\\").Trim();
+            topic = topic.Replace("\\\\", "\\");
             string[] nodes = topic.Split('/');
 
             StringBuilder sb = new StringBuilder();

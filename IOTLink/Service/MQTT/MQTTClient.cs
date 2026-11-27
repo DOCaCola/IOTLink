@@ -20,6 +20,9 @@ namespace IOTLinkService.Service.MQTT
     internal class MQTTClient
     {
         private MqttConfig _config;
+        private string _machineTopicPrefix;
+        private string _globalTopicPrefix;
+        private string _lastWillTopic;
 
         private IManagedMqttClient _client;
         private IMqttClientOptions _options;
@@ -108,6 +111,10 @@ namespace IOTLinkService.Service.MQTT
             if (_config.CleanSession)
                 mqttOptionBuilder = mqttOptionBuilder.WithCleanSession();
 
+            _machineTopicPrefix = MQTTHelper.GetFullTopicName(_config.Prefix);
+            _globalTopicPrefix = MQTTHelper.GetGlobalTopicName(_config.GlobalPrefix);
+            _lastWillTopic = _machineTopicPrefix + "lwt";
+
             // LWT
             if (_config.LWT != null && _config.LWT.Enabled)
             {
@@ -158,7 +165,7 @@ namespace IOTLinkService.Service.MQTT
 
                 _client.StartAsync(_managedOptions).GetAwaiter().GetResult();
 
-                LoggerHelper.System("ALL YOUR MQTT TOPICS WILL START WITH {0}", MQTTHelper.GetFullTopicName(_config.Prefix));
+                LoggerHelper.System("ALL YOUR MQTT TOPICS WILL START WITH {0}", _machineTopicPrefix);
             }
         }
 
@@ -275,7 +282,7 @@ namespace IOTLinkService.Service.MQTT
                 return;
             }
 
-            topic = MQTTHelper.GetFullTopicName(_config.Prefix, topic);
+            topic = MQTTHelper.AppendTopic(_machineTopicPrefix, topic);
             if (message == null)
                 message = string.Empty;
 
@@ -299,8 +306,7 @@ namespace IOTLinkService.Service.MQTT
                 return;
             }
 
-            var availabilityTopic = MQTTHelper.GetFullTopicName(_config.Prefix, "LWT");
-            var topic = MQTTHelper.GetFullTopicName(_config.Prefix, stateTopic);
+            var topic = MQTTHelper.AppendTopic(_machineTopicPrefix, stateTopic);
             var machineName = Environment.MachineName;
             var machineFullName = PlatformHelper.GetFullMachineName().Replace("\\", " ");
 
@@ -313,7 +319,7 @@ namespace IOTLinkService.Service.MQTT
             {
                 Name = string.Format("{0} {1}", machineName, discoveryOptions.Name),
                 UniqueId = uniqueId,
-                AvailabilityTopic = availabilityTopic,
+                AvailabilityTopic = _lastWillTopic,
                 PayloadAvailable = "ON",
                 PayloadNotAvailable = "OFF",
             };
@@ -384,7 +390,7 @@ namespace IOTLinkService.Service.MQTT
                 return;
             }
 
-            topic = MQTTHelper.GetFullTopicName(_config.Prefix, topic);
+            topic = MQTTHelper.AppendTopic(_machineTopicPrefix, topic);
             if (message == null)
                 message = new byte[] { };
 
@@ -410,10 +416,10 @@ namespace IOTLinkService.Service.MQTT
                 OnMQTTConnected?.Invoke(this, mqttEvent);
 
                 // Subscribe to ALL Messages
-                SubscribeTopic(MQTTHelper.GetFullTopicName(_config.Prefix, "#"));
+                SubscribeTopic(_machineTopicPrefix + "#");
 
                 if (!string.IsNullOrWhiteSpace(_config.GlobalPrefix))
-                    SubscribeTopic(MQTTHelper.GetGlobalTopicName(_config.GlobalPrefix, "#"));
+                    SubscribeTopic(_globalTopicPrefix + "#");
 
                 SendLWTConnect();
             }
@@ -505,8 +511,7 @@ namespace IOTLinkService.Service.MQTT
         /// <returns>LWT message</returns>
         private MqttApplicationMessage GetLWTMessage(string message)
         {
-            string topic = MQTTHelper.GetFullTopicName(_config.Prefix, "LWT");
-            return BuildMQTTMessage(topic, Encoding.UTF8.GetBytes(message), _config.LWT);
+            return BuildMQTTMessage(_lastWillTopic, Encoding.UTF8.GetBytes(message), _config.LWT);
         }
 
         /// <summary>
@@ -626,8 +631,8 @@ namespace IOTLinkService.Service.MQTT
 
             return MQTTHelper
                 .SanitizeTopic(topic)
-                .Replace(MQTTHelper.GetFullTopicName(_config.Prefix), "")
-                .Replace(MQTTHelper.GetGlobalTopicName(_config.GlobalPrefix), "");
+                .Replace(_machineTopicPrefix, "")
+                .Replace(_globalTopicPrefix, "");
         }
     }
 }
