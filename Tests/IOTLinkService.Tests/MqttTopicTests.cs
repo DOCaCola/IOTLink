@@ -136,7 +136,7 @@ namespace IOTLinkService.Tests
             await AssertRetainedSnapshot(items, "windows-monitor/stats/memory/state", 4);
         }
 
-        private static async Task AssertRetainedSnapshot(List<MonitorItem> items, string suffix, int entityCount)
+        internal static async Task AssertRetainedSnapshot(List<MonitorItem> items, string suffix, int entityCount)
         {
             int port;
             using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))

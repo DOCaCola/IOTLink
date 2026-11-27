@@ -50,7 +50,8 @@ formats:
 #                     usage is a percentage. available, used, and total use the reported unit (memoryFormat).
 # HardDrive         : Hard Drives (Total Size, Free Space, Format, etc).
 # Power             : Power (Status, Battery Status, Remaning Time, etc).
-# NetworkInfo       : Network Information (IPv4, IPv6, Speed, Wired).
+# NetworkInfo       : Retained JSON at windows-monitor/stats/network/state. The adapters object is keyed by Windows adapter ID.
+#                     It includes IP addresses, link speed (Mbps), wired status, byte counters and rates (bytes/second).
 # SystemInfo        : System Info (Current user physically logged in).
 # IdleTime          : Idle Time (Current user physically logged in).
 # Uptime            : Uptime information (Boot time, Uptime).

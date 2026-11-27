@@ -5,6 +5,8 @@ using IOTLinkAPI.Platform.HomeAssistant;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using Newtonsoft.Json;
 using System.Linq;
 using System.Net.NetworkInformation;
 using System.Threading;
@@ -16,19 +18,25 @@ namespace IOTLinkAddon.Service.Monitors
         private static readonly string CONFIG_KEY = "NetworkInfo";
 
         private readonly Func<IEnumerable<NetworkAdapter>> _discover;
+        internal const string StateTopic = "Stats/Network/State";
         private readonly Func<long> _getTimestamp;
+        private readonly Func<string> _indexPath;
+        private static readonly object SlotFileLock = new object();
+        private List<string> _slots;
+        private List<MonitorItem> _discovery = new List<MonitorItem>();
         private List<NetworkAdapter> _adapters = new List<NetworkAdapter>();
         private Dictionary<string, NetworkInfo> _previous = new Dictionary<string, NetworkInfo>();
         private int _refreshRequested = 1;
         private long _lastRefresh;
         private bool _subscribed;
 
-        public NetworkMonitor() : this(NetworkAdapter.Discover, Stopwatch.GetTimestamp) { }
+        public NetworkMonitor(Func<string> indexPath) : this(NetworkAdapter.Discover, Stopwatch.GetTimestamp, indexPath) { }
 
-        internal NetworkMonitor(Func<IEnumerable<NetworkAdapter>> discover, Func<long> getTimestamp)
+        internal NetworkMonitor(Func<IEnumerable<NetworkAdapter>> discover, Func<long> getTimestamp, Func<string> indexPath)
         {
             _discover = discover;
             _getTimestamp = getTimestamp;
+            _indexPath = indexPath;
         }
 
         public override void Init(MonitorSettings settings)
@@ -50,6 +58,7 @@ namespace IOTLinkAddon.Service.Monitors
                 _subscribed = false;
             }
             _adapters.Clear();
+            _discovery.Clear();
             _previous.Clear();
             RequestRefresh();
         }
@@ -58,12 +67,12 @@ namespace IOTLinkAddon.Service.Monitors
 
         internal void RequestRefresh() => Interlocked.Exchange(ref _refreshRequested, 1);
 
-        private void RefreshAdapters()
+        private bool RefreshAdapters()
         {
             long now = _getTimestamp();
             // Consume the notification before discovery so a change during discovery survives.
             if (Interlocked.Exchange(ref _refreshRequested, 0) == 0 && now - _lastRefresh < 60L * Stopwatch.Frequency)
-                return;
+                return true;
 
             try
             {
@@ -73,14 +82,27 @@ namespace IOTLinkAddon.Service.Monitors
                     if (_previous.TryGetValue(adapter.Id, out var sample))
                         retained.Add(adapter.Id, sample);
 
+                try
+                {
+                    var slots = GetDiscoverySlots(adapters);
+                    _discovery = adapters.SelectMany(a => CreateDiscoveryItems(a.Id, slots.IndexOf(a.Id))).ToList();
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+                {
+                    LoggerHelper.Error("Could not load or save network entity IDs: {0}", ex.Message);
+                }
+                // Keep the serialized snapshot identical when Windows only reorders interfaces.
+                adapters.Sort((left, right) => StringComparer.Ordinal.Compare(left.Id, right.Id));
                 _adapters = adapters;
                 _previous = retained;
                 _lastRefresh = now;
+                return true;
             }
             catch (NetworkInformationException ex)
             {
                 LoggerHelper.Error("Error refreshing network adapters: {0}", ex.Message);
                 RequestRefresh();
+                return false;
             }
         }
 
@@ -89,14 +111,86 @@ namespace IOTLinkAddon.Service.Monitors
             return CONFIG_KEY;
         }
 
+        // The original Home Assistant unique IDs contain the enumeration index. Assign those slots
+        // in Windows order on migration, then keep each slot bound to the same adapter across restarts.
+        private List<string> GetDiscoverySlots(List<NetworkAdapter> adapters)
+        {
+            if (_slots != null && adapters.All(a => _slots.Contains(a.Id)))
+                return _slots;
+
+            lock (SlotFileLock)
+            {
+                var path = _indexPath();
+                var slots = File.Exists(path) ? JsonConvert.DeserializeObject<List<string>>(File.ReadAllText(path)) : new List<string>();
+                if (slots == null || slots.Any(string.IsNullOrWhiteSpace) || slots.Distinct(StringComparer.Ordinal).Count() != slots.Count)
+                    throw new InvalidDataException($"Invalid adapter ID list in {path}");
+
+                int previousCount = slots.Count;
+                foreach (var adapter in adapters)
+                    if (!slots.Contains(adapter.Id))
+                        slots.Add(adapter.Id);
+                if (slots.Count != previousCount)
+                {
+                    var tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    try
+                    {
+                        File.WriteAllText(tempPath, JsonConvert.SerializeObject(slots));
+                        File.Move(tempPath, path, true);
+                    }
+                    finally { File.Delete(tempPath); }
+                }
+                _slots = slots;
+                return slots;
+            }
+        }
+
+        private static IEnumerable<MonitorItem> CreateDiscoveryItems(string adapterId, int slot)
+        {
+            string adapter = "value_json.adapters.get(" + JsonConvert.ToString(adapterId) + ", {})";
+            MonitorItem Sensor(string field, string suffix, string label, string unit = null, string icon = null, bool binary = false)
+            {
+                string id = $"{slot}_{suffix}";
+                return new MonitorItem
+                {
+                    ConfigKey = CONFIG_KEY,
+                    Topic = StateTopic,
+                    DiscoveryKey = StateTopic + "/" + id,
+                    CreateDiscoveryOptions = _ => new HassDiscoveryOptions
+                    {
+                        Component = binary ? HomeAssistantComponent.BinarySensor : HomeAssistantComponent.Sensor,
+                        Id = id,
+                        Name = $"Network #{slot} - {label}",
+                        Unit = unit,
+                        Icon = icon,
+                        PayloadOn = binary ? "True" : null,
+                        PayloadOff = binary ? "False" : null,
+                        ValueTemplate = "{{ " + adapter + ".get('" + field + "') }}"
+                    }
+                };
+            }
+
+            yield return Sensor("ipv4", "IPv4Adress", "IPv4", icon: "mdi:lan");
+            yield return Sensor("ipv6", "IPv6Adress", "IPv6", icon: "mdi:lan");
+            yield return Sensor("speedMbps", "Speed", "Speed", "Mbps", "mdi:speedometer");
+            yield return Sensor("wired", "Wired", "Wired", binary: true);
+            yield return Sensor("bytesSent", "BytesSent", "Bytes Sent", "B");
+            yield return Sensor("bytesReceived", "BytesReceived", "Bytes Received", "B");
+            yield return Sensor("bytesSentPerSecond", "BytesSentPerSecond", "BPS Sent", "Bps");
+            yield return Sensor("bytesReceivedPerSecond", "BytesReceivedPerSecond", "BPS Received", "Bps");
+        }
+
+        public override List<MonitorItem> GetDiscoveryItems(Configuration config, int interval)
+        {
+            return RefreshAdapters() ? _discovery : null;
+        }
+
         public override List<MonitorItem> GetMonitorItems(Configuration config, int interval)
         {
-            List<MonitorItem> result = new List<MonitorItem>();
-
-            RefreshAdapters();
-            for (int i = 0; i < _adapters.Count; i++)
+            if (!RefreshAdapters())
+                return null;
+            var snapshot = new Dictionary<string, object>(_adapters.Count);
+            foreach (var adapter in _adapters)
             {
-                var adapter = _adapters[i];
                 NetworkInfo networkInfo;
                 try
                 {
@@ -112,152 +206,31 @@ namespace IOTLinkAddon.Service.Monitors
 
                 _previous.TryGetValue(adapter.Id, out var previous);
                 _previous[adapter.Id] = networkInfo;
-                string index = i.ToString();
-                var topic = $"Stats/Network/{index}";
-
-                // IPv4
-                if (!string.IsNullOrWhiteSpace(networkInfo.IPv4Address))
+                snapshot.Add(adapter.Id, new
                 {
-                    result.Add(new MonitorItem(index)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_RAW,
-                        Topic = topic + "/IPv4",
-                        Value = networkInfo.IPv4Address,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_IPv4Adress",
-                            Name = $"Network #{item.InstanceId} - IPv4",
-                            Icon = "mdi:lan"
-                        }
-                    });
-                }
-
-                // IPv6
-                if (!string.IsNullOrWhiteSpace(networkInfo.IPv6Address))
-                {
-                    result.Add(new MonitorItem(index)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_RAW,
-                        Topic = topic + "/IPv6",
-                        Value = networkInfo.IPv6Address,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_IPv6Adress",
-                            Name = $"Network #{item.InstanceId} - IPv6",
-                            Icon = "mdi:lan"
-                        }
-                    });
-                }
-
-                // Network Speed
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/Speed",
-                    Value = networkInfo.Speed,
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                    {
-                        Component = HomeAssistantComponent.Sensor,
-                        Id = $"{item.InstanceId}_Speed",
-                        Name = $"Network #{item.InstanceId} - Speed",
-                        Unit = "Mbps",
-                        Icon = "mdi:speedometer"
-                    }
+                    ipv4 = networkInfo.IPv4Address,
+                    ipv6 = networkInfo.IPv6Address,
+                    speedMbps = networkInfo.Speed,
+                    wired = networkInfo.Wired,
+                    bytesSent = networkInfo.BytesSent,
+                    bytesReceived = networkInfo.BytesReceived,
+                    bytesSentPerSecond = Rate(networkInfo.BytesSent, previous?.BytesSent, interval),
+                    bytesReceivedPerSecond = Rate(networkInfo.BytesReceived, previous?.BytesReceived, interval)
                 });
-
-                // Network Wired
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY,
-                    Type = MonitorItemType.TYPE_RAW,
-                    Topic = topic + "/Wired",
-                    Value = networkInfo.Wired,
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                    {
-                        Component = HomeAssistantComponent.BinarySensor,
-                        Id = $"{item.InstanceId}_Wired",
-                        Name = $"Network #{item.InstanceId} - Wired",
-                        PayloadOff = "False",
-                        PayloadOn = "True"
-                    }
-                });
-
-                // Network Bytes Sent
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY,
-                    Type = MonitorItemType.TYPE_NETWORK_SIZE,
-                    Topic = topic + "/BytesSent",
-                    Value = networkInfo.BytesSent,
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                    {
-                        Component = HomeAssistantComponent.Sensor,
-                        Id = $"{item.InstanceId}_BytesSent",
-                        Name = $"Network #{item.InstanceId} - Bytes Sent",
-                        Unit = "B"
-                    }
-                });
-
-                // Network Bytes Received
-                result.Add(new MonitorItem(index)
-                {
-                    ConfigKey = CONFIG_KEY,
-                    Type = MonitorItemType.TYPE_NETWORK_SIZE,
-                    Topic = topic + "/BytesReceived",
-                    Value = networkInfo.BytesReceived,
-                    CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                    {
-                        Component = HomeAssistantComponent.Sensor,
-                        Id = $"{item.InstanceId}_BytesReceived",
-                        Name = $"Network #{item.InstanceId} - Bytes Received",
-                        Unit = "B"
-                    }
-                });
-
-                // Bytes Sent per second
-                if (previous != null && networkInfo.BytesSent >= previous.BytesSent)
-                {
-                    result.Add(new MonitorItem(index)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_NETWORK_SPEED,
-                        Topic = topic + "/BytesSentPerSecond",
-                        Value = (networkInfo.BytesSent - previous.BytesSent) / interval,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_BytesSentPerSecond",
-                            Name = $"Network #{item.InstanceId} - BPS Sent",
-                            Unit = "Bps"
-                        }
-                    });
-                }
-
-                // Bytes Received per second
-                if (previous != null && networkInfo.BytesReceived >= previous.BytesReceived)
-                {
-                    result.Add(new MonitorItem(index)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_NETWORK_SPEED,
-                        Topic = topic + "/BytesReceivedPerSecond",
-                        Value = (networkInfo.BytesReceived - previous.BytesReceived) / interval,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_BytesReceivedPerSecond",
-                            Name = $"Network #{item.InstanceId} - BPS Received",
-                            Unit = "Bps"
-                        }
-                    });
-                }
             }
-            return result;
+            var items = new List<MonitorItem>(_discovery.Count + 1);
+            items.AddRange(_discovery);
+            items.Add(new MonitorItem
+            {
+                ConfigKey = CONFIG_KEY,
+                Topic = StateTopic,
+                Type = MonitorItemType.TYPE_RETAINED_STATE,
+                Value = JsonConvert.SerializeObject(new { adapters = snapshot })
+            });
+            return items;
         }
+
+        private static long? Rate(long current, long? previous, int interval) =>
+            current >= previous ? (current - previous) / interval : null;
     }
 }

@@ -35,10 +35,14 @@ namespace IOTLinkAddon.Service
         private readonly IMonitor[] monitors;
         private IMonitor[] _polledMonitors;
 
-        public WindowsMonitorService() : this(
-            new CPUMonitor(), new MemoryMonitor(), new PowerMonitor(), new NetworkMonitor(),
-            new StorageMonitor(), new SystemMonitor(), new UptimeMonitor(), new DisplayMonitor())
+        public WindowsMonitorService()
         {
+            monitors = new IMonitor[]
+            {
+                new CPUMonitor(), new MemoryMonitor(), new PowerMonitor(),
+                new NetworkMonitor(() => Path.Combine(_currentPath, "network-adapter-ids.json")),
+                new StorageMonitor(), new SystemMonitor(), new UptimeMonitor(), new DisplayMonitor()
+            };
         }
 
         internal WindowsMonitorService(params IMonitor[] monitors)
@@ -143,7 +147,7 @@ namespace IOTLinkAddon.Service
                 {
                     LoggerHelper.Debug("WindowsMonitorService::SetupDiscovery() - {0} Monitor - Sending configuration", configKey);
 
-                    List<MonitorItem> items = monitor.GetMonitorItems(settings.Config, settings.Interval);
+                    List<MonitorItem> items = monitor.GetDiscoveryItems(settings.Config, settings.Interval);
                     if (items == null)
                         continue;
 
@@ -304,10 +308,6 @@ namespace IOTLinkAddon.Service
                     value = settings.DiskFormat.Convert(MathHelper.ToLong(item.Value, 0L)).ToString(CultureInfo.InvariantCulture);
                     break;
 
-                case MonitorItemType.TYPE_NETWORK_SPEED:
-                case MonitorItemType.TYPE_NETWORK_SIZE:
-                    value = item.Value.ToString();
-                    break;
 
                 case MonitorItemType.TYPE_DATE:
                     value = FormatDateObject(item.Value, settings.DateFormat);

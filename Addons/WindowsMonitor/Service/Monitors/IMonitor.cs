@@ -7,6 +7,7 @@ namespace IOTLinkAddon.Service.Monitors
     interface IMonitor
     {
         void Init(MonitorSettings settings);
+        List<MonitorItem> GetDiscoveryItems(Configuration config, int interval);
         List<MonitorItem> GetMonitorItems(Configuration config, int interval);
         Dictionary<string, AddonRequestType> GetAgentRequests();
         string GetConfigKey();
