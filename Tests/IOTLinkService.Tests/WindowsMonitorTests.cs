@@ -22,6 +22,53 @@ namespace IOTLinkService.Tests
     [TestClass]
     public class WindowsMonitorTests
     {
+        [DataTestMethod]
+        [DataRow(true)]
+        [DataRow(false)]
+        public void MemoryPublishesOneRetainedSnapshotPerEligibleSample(bool cacheable)
+        {
+            const long mib = 1024 * 1024;
+            var sample = new IOTLinkAPI.Platform.MemoryInfo { TotalPhysical = 8 * mib, AvailPhysical = 2 * mib, MemoryLoad = 75 };
+            int reads = 0;
+            var memory = new MemoryMonitor(() => { Interlocked.Increment(ref reads); return sample; });
+            string directory = Directory.CreateTempSubdirectory().FullName;
+            var service = new WindowsMonitorService(memory);
+            var manager = new RecordingManager();
+            try
+            {
+                File.WriteAllText(Path.Combine(directory, "config.yaml"), $"""
+                    enabled: true
+                    monitors:
+                      Memory:
+                        enabled: true
+                        interval: 1
+                        cacheable: {cacheable.ToString().ToLowerInvariant()}
+                    """);
+                service.SetCurrentPath(directory);
+                service.SetAddonInfo(new AddonInfo { AddonId = "WindowsMonitor" });
+                service.Init(manager);
+                int discoveryReads = reads;
+                Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref reads) >= discoveryReads + 2, 5000));
+                service.Raise_OnMQTTDisconnected(this, null);
+                int polls = reads - discoveryReads;
+                Assert.AreEqual(cacheable ? 1 : polls, manager.Values);
+                Assert.AreEqual(manager.Values, manager.Retained);
+                CollectionAssert.AreEqual(new[] { "Stats/Memory/State" }, manager.LastValues.Keys.ToArray());
+                var state = JObject.Parse(manager.LastValues["Stats/Memory/State"]);
+                Assert.AreEqual(75, (int)state["usage"]);
+                Assert.AreEqual(2d, (double)state["available"]);
+                Assert.AreEqual(6d, (double)state["used"]);
+                Assert.AreEqual(8d, (double)state["total"]);
+                Assert.AreEqual("MB", (string)state["unit"]);
+                Assert.AreEqual(4, manager.Discoveries);
+            }
+            finally
+            {
+                service.Raise_OnMQTTDisconnected(this, null);
+                Directory.Delete(directory, true);
+            }
+        }
+
         [TestMethod]
         public void CachedDisplayPublishesHdrChangesAndOnlyRequestsSnapshotsOnRefresh()
         {
@@ -301,7 +348,14 @@ namespace IOTLinkService.Tests
             var manager = new RecordingManager();
             var drive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory));
             string diskTopic = $"Stats/HardDrive/{drive.Name[0]}/TotalSize";
-            const string memoryTopic = "Stats/Memory/Total";
+            const string memoryTopic = "Stats/Memory/State";
+            void AssertMemoryTotal(double total, string unit)
+            {
+                var state = JObject.Parse(manager.LastValues[memoryTopic]);
+                Assert.AreEqual(total, (double)state["total"]);
+                Assert.AreEqual(unit, (string)state["unit"]);
+                Assert.AreEqual(unit, manager.LastDiscovery[memoryTopic].Unit);
+            }
             const string bootTopic = "Stats/System/BootTime";
             const string sensors = "monitors:\n" +
                 "  HardDrive: { enabled: true, interval: 1 }\n" +
@@ -326,19 +380,19 @@ namespace IOTLinkService.Tests
                     configs.SetReloadHandler(path, onReload);
                     service.Raise_OnRefreshRequested(this, EventArgs.Empty);
                     Assert.AreEqual(drive.TotalSize.ToString(culture), manager.LastValues[diskTopic]);
-                    Assert.AreEqual(memory.ToString(culture), manager.LastValues[memoryTopic]);
+                    AssertMemoryTotal(memory, "B");
                     Assert.AreEqual(boot.ToString("MM/dd", culture), manager.LastValues[bootTopic]);
 
                     File.WriteAllText(path, "enabled: true\nformats: { diskFormat: 'TB:2', memoryFormat: 'GB:1', dateTimeFormat: yyyyMMdd }\n" + sensors);
                     Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)));
                     Assert.AreEqual(Math.Round(UnitsHelper.BytesToTerabytes(drive.TotalSize), 2).ToString(culture), manager.LastValues[diskTopic]);
-                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToGigabytes(memory), 1).ToString(culture), manager.LastValues[memoryTopic]);
+                    AssertMemoryTotal(Math.Round(UnitsHelper.BytesToGigabytes(memory), 1), "GB");
                     Assert.AreEqual(boot.ToString("yyyyMMdd", culture), manager.LastValues[bootTopic]);
 
                     File.WriteAllText(path, "enabled: true\n" + sensors);
                     Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)));
                     Assert.AreEqual(Math.Round(UnitsHelper.BytesToGigabytes(drive.TotalSize)).ToString(culture), manager.LastValues[diskTopic]);
-                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToMegabytes(memory)).ToString(culture), manager.LastValues[memoryTopic]);
+                    AssertMemoryTotal(Math.Round(UnitsHelper.BytesToMegabytes(memory)), "MB");
                     Assert.AreEqual(boot.ToString("yyyy-MM-dd HH:mm:ss", culture), manager.LastValues[bootTopic]);
                 }
                 finally

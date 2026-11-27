@@ -2,94 +2,74 @@
 using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform;
 using IOTLinkAPI.Platform.HomeAssistant;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 
 namespace IOTLinkAddon.Service.Monitors
 {
     class MemoryMonitor : BaseMonitor
     {
-        private static readonly string CONFIG_KEY = "Memory";
+        private const string ConfigKey = "Memory";
+        internal const string StateTopic = "Stats/Memory/State";
+        private readonly Func<MemoryInfo> _read;
+        private SizeFormat _format;
+        private MonitorItem[] _discovery;
 
-        public override string GetConfigKey()
+        public MemoryMonitor() : this(PlatformHelper.GetMemoryInformation) { }
+        internal MemoryMonitor(Func<MemoryInfo> read) => _read = read;
+
+        public override string GetConfigKey() => ConfigKey;
+
+        public override void Init(MonitorSettings settings)
         {
-            return CONFIG_KEY;
+            _format = settings.MemoryFormat;
+            _discovery = new[]
+            {
+                Sensor("Usage", "%"), Sensor("Available", _format.Unit),
+                Sensor("Used", _format.Unit), Sensor("Total", _format.Unit)
+            };
         }
+
+        private static MonitorItem Sensor(string id, string unit) => new MonitorItem
+        {
+            ConfigKey = ConfigKey,
+            Topic = StateTopic,
+            DiscoveryKey = StateTopic + "/" + id,
+            CreateDiscoveryOptions = _ => new HassDiscoveryOptions
+            {
+                Component = HomeAssistantComponent.Sensor,
+                Id = id,
+                Name = "Memory " + id,
+                Unit = unit,
+                Icon = "mdi:memory",
+                ValueTemplate = "{{ value_json." + id.ToLowerInvariant() + " }}"
+            }
+        };
 
         public override List<MonitorItem> GetMonitorItems(Configuration config, int interval)
         {
-            List<MonitorItem> result = new List<MonitorItem>();
-
-            MemoryInfo memoryInfo = PlatformHelper.GetMemoryInformation();
-
-            // Memory Usage (%)
-            result.Add(new MonitorItem
+            var items = new List<MonitorItem>(_discovery.Length + 1);
+            items.AddRange(_discovery);
+            var memory = _read();
+            if (memory != null)
             {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_RAW,
-                Topic = "Stats/Memory/Usage",
-                Value = memoryInfo.MemoryLoad,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
+                items.Add(new MonitorItem
                 {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "Usage",
-                    Name = "Memory Usage",
-                    Unit = "%",
-                    Icon = "mdi:memory"
-                }
-            });
-
-            // Memory Available
-            result.Add(new MonitorItem
-            {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_MEMORY_SIZE,
-                Topic = "Stats/Memory/Available",
-                Value = memoryInfo.AvailPhysical,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "Available",
-                    Name = "Memory Available",
-                    Unit = "MB",
-                    Icon = "mdi:memory"
-                }
-            });
-
-            // Memory Used
-            result.Add(new MonitorItem
-            {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_MEMORY_SIZE,
-                Topic = "Stats/Memory/Used",
-                Value = (memoryInfo.TotalPhysical - memoryInfo.AvailPhysical),
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "Used",
-                    Name = "Memory Used",
-                    Unit = "MB",
-                    Icon = "mdi:memory"
-                }
-            });
-
-            // Memory Total
-            result.Add(new MonitorItem
-            {
-                ConfigKey = CONFIG_KEY,
-                Type = MonitorItemType.TYPE_MEMORY_SIZE,
-                Topic = "Stats/Memory/Total",
-                Value = memoryInfo.TotalPhysical,
-                CreateDiscoveryOptions = _ => new HassDiscoveryOptions()
-                {
-                    Component = HomeAssistantComponent.Sensor,
-                    Id = "Total",
-                    Name = "Memory Total",
-                    Unit = "MB",
-                    Icon = "mdi:memory"
-                }
-            });
-
-            return result;
+                    ConfigKey = ConfigKey,
+                    Topic = StateTopic,
+                    Type = MonitorItemType.TYPE_RETAINED_STATE,
+                    Value = JsonConvert.SerializeObject(new
+                    {
+                        usage = memory.MemoryLoad,
+                        available = _format.Convert((long)memory.AvailPhysical),
+                        used = _format.Convert((long)(memory.TotalPhysical - memory.AvailPhysical)),
+                        total = _format.Convert((long)memory.TotalPhysical),
+                        unit = _format.Unit
+                    })
+                });
+            }
+            return items;
         }
     }
 }

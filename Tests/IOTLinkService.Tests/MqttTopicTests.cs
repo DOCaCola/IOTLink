@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Text;
+using IOTLinkAddon.Service;
 using IOTLinkAddon.Service.Monitors;
 using MQTTnet.Client;
 using MQTTnet.Client.Options;
@@ -111,6 +112,32 @@ namespace IOTLinkService.Tests
         [Timeout(30000)]
         public async Task LateSubscriberReceivesDisplaySnapshotWhenNormalMessagesAreNotRetained()
         {
+            var monitor = new DisplayMonitor();
+            var items = monitor.OnAgentResponse(null, monitor.GetAgentRequests()[monitor.GetConfigKey()],
+                new JObject { ["requestData"] = new JArray(new JObject { ["HdrEnabled"] = true }) }, "test");
+            await AssertRetainedSnapshot(items, "windows-monitor/stats/display/state", 10);
+        }
+
+        [TestMethod]
+        [Timeout(30000)]
+        public async Task MemoryDiscoveryExtractsFourSensorsFromOneRetainedState()
+        {
+            var memory = new MemoryMonitor();
+            memory.Init(new MonitorSettings(null, null));
+            var items = memory.GetMonitorItems(null, 10);
+            var entities = items.Where(i => i.CreateDiscoveryOptions != null).Select(i => i.CreateDiscoveryOptions(i)).ToDictionary(o => o.Id);
+            CollectionAssert.AreEquivalent(new[] { "Usage", "Available", "Used", "Total" }, entities.Keys.ToArray());
+            foreach (var entity in entities.Values)
+            {
+                Assert.AreEqual("Memory " + entity.Id, entity.Name);
+                Assert.AreEqual(entity.Id == "Usage" ? "%" : "MB", entity.Unit);
+                Assert.AreEqual("{{ value_json." + entity.Id.ToLowerInvariant() + " }}", entity.ValueTemplate);
+            }
+            await AssertRetainedSnapshot(items, "windows-monitor/stats/memory/state", 4);
+        }
+
+        private static async Task AssertRetainedSnapshot(List<MonitorItem> items, string suffix, int entityCount)
+        {
             int port;
             using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
             {
@@ -133,19 +160,16 @@ namespace IOTLinkService.Tests
             manager.OnMQTTConnected += (_, _) => connected.TrySetResult();
             manager.Start();
             await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var monitor = new DisplayMonitor();
-            var items = monitor.OnAgentResponse(null, monitor.GetAgentRequests()[monitor.GetConfigKey()],
-                new JObject { ["requestData"] = new JArray(new JObject { ["HdrEnabled"] = true }) }, "test");
             foreach (var item in items.Where(i => i.CreateDiscoveryOptions != null))
                 manager.PublishDiscoveryMessage(item.Topic, item.ConfigKey, item.CreateDiscoveryOptions(item), "WindowsMonitor");
             var snapshot = items.Single(i => i.Value != null);
             manager.PublishMessage(snapshot.Topic, (string)snapshot.Value, "WindowsMonitor", forceRetain: true);
-            string topic = MQTTHelper.GetFullTopicName(config.Prefix) + "windows-monitor/stats/display/state";
+            string topic = MQTTHelper.GetFullTopicName(config.Prefix) + suffix;
             using var deadline = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while ((await broker.GetRetainedApplicationMessagesAsync()).Count < 11)
+            while ((await broker.GetRetainedApplicationMessagesAsync()).Count < entityCount + 1)
                 await Task.Delay(20, deadline.Token);
             var retained = await broker.GetRetainedApplicationMessagesAsync();
-            Assert.AreEqual(11, retained.Count);
+            Assert.AreEqual(entityCount + 1, retained.Count);
             foreach (var message in retained.Where(m => m.Topic.StartsWith("homeassistant/")))
                 Assert.AreEqual(topic, (string)JObject.Parse(Encoding.UTF8.GetString(message.Payload))["state_topic"]);
 

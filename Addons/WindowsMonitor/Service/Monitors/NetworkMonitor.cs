@@ -31,7 +31,7 @@ namespace IOTLinkAddon.Service.Monitors
             _getTimestamp = getTimestamp;
         }
 
-        public override void Init()
+        public override void Init(MonitorSettings settings)
         {
             if (_subscribed)
                 return;

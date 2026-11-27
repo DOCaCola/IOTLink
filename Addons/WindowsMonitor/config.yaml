@@ -46,7 +46,8 @@ formats:
 # Cacheable monitors don't send the value repeatedly unless it changes.
 ############################################################################
 # CPU               : CPU Usage
-# Memory            : Memory (Usage, Available, Used, Total).
+# Memory            : One retained JSON snapshot on windows-monitor/stats/memory/state.
+#                     usage is a percentage. available, used, and total use the reported unit (memoryFormat).
 # HardDrive         : Hard Drives (Total Size, Free Space, Format, etc).
 # Power             : Power (Status, Battery Status, Remaning Time, etc).
 # NetworkInfo       : Network Information (IPv4, IPv6, Speed, Wired).

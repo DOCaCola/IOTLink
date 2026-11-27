@@ -12,7 +12,7 @@ namespace IOTLinkAddon.Service.Monitors
 
         private CpuUsageSampler _cpuUsage;
 
-        public override void Init()
+        public override void Init(MonitorSettings settings)
         {
             if (_cpuUsage != null)
                 return;

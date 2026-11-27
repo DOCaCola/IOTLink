@@ -99,6 +99,7 @@ namespace IOTLinkAddon.Service.Monitors
                 ConfigKey = CONFIG_KEY_INFO,
                 Topic = StateTopic,
                 Type = MonitorItemType.TYPE_RETAINED_STATE,
+                PublishOnChangeOnly = true,
                 Value = JsonConvert.SerializeObject(new { displays = displays.Select(d => new
                 {
                     screenWidth = d.ScreenWidth, screenHeight = d.ScreenHeight,

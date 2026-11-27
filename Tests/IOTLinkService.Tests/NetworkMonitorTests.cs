@@ -51,14 +51,14 @@ namespace IOTLinkService.Tests
             }, () => 0);
             using (monitor)
             {
-                monitor.Init();
-                monitor.Init();
+                monitor.Init(null);
+                monitor.Init(null);
                 monitor.GetMonitorItems(null, 10);
                 var second = monitor.GetMonitorItems(null, 10);
                 Assert.AreEqual(2, discoveries);
                 Assert.IsTrue(second.Any(item => item.Topic.EndsWith("PerSecond")));
                 monitor.Dispose();
-                monitor.Init();
+                monitor.Init(null);
                 var restarted = monitor.GetMonitorItems(null, 10);
                 Assert.AreEqual(3, discoveries);
                 Assert.IsFalse(restarted.Any(item => item.Topic.EndsWith("PerSecond")));

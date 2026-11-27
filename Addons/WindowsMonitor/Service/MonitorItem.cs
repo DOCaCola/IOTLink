@@ -12,6 +12,8 @@ namespace IOTLinkAddon.Service
 
         public string InstanceId { get; }
 
+        public bool PublishOnChangeOnly { get; set; }
+
         public string DiscoveryKey { get; set; }
 
         public string Topic { get; set; }

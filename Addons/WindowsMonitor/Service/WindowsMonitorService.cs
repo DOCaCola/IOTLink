@@ -17,15 +17,6 @@ namespace IOTLinkAddon.Service
 {
     public class WindowsMonitorService : ServiceAddon
     {
-        private static readonly int DEFAULT_INTERVAL = 60;
-
-        private static readonly string DEFAULT_FORMAT_DISK_SIZE = "GB";
-        private static readonly string DEFAULT_FORMAT_MEMORY_SIZE = "MB";
-
-        private static readonly string DEFAULT_FORMAT_DATE = "yyyy-MM-dd";
-        private static readonly string DEFAULT_FORMAT_TIME = "HH:mm:ss";
-        private static readonly string DEFAULT_FORMAT_DATETIME = "yyyy-MM-dd HH:mm:ss";
-
         private readonly object _monitorLock = new object();
         private bool _enabled;
         private bool _mqttDisconnected;
@@ -35,68 +26,6 @@ namespace IOTLinkAddon.Service
         private string _configPath;
         private Configuration _config;
         private Configuration _globalFormats;
-
-        private readonly struct SizeFormat
-        {
-            private readonly string _unit;
-            private readonly int _roundDigits;
-
-            public SizeFormat(string format)
-            {
-                string[] parts = format.Split(':');
-                _unit = parts[0];
-                _roundDigits = parts.Length > 1 ? MathHelper.ToInteger(parts[1]) : 0;
-            }
-
-            public string Format(object value)
-            {
-                double size = UnitsHelper.ConvertSize(MathHelper.ToLong(value, 0L), _unit);
-                return Math.Round(size, _roundDigits).ToString(CultureInfo.InvariantCulture);
-            }
-        }
-
-        private sealed class MonitorSettings
-        {
-            public Configuration Config { get; }
-            public bool Enabled { get; }
-            public int Interval { get; }
-            public bool Cacheable { get; }
-
-            public SizeFormat DiskFormat { get; }
-            public SizeFormat MemoryFormat { get; }
-            public string DateFormat { get; }
-            public string TimeFormat { get; }
-            public string DateTimeFormat { get; }
-
-            public MonitorSettings(Configuration config, Configuration globalFormats)
-            {
-                Config = config;
-                Enabled = config?.GetValue("enabled", false) ?? false;
-                Interval = config?.GetValue("interval", DEFAULT_INTERVAL) ?? DEFAULT_INTERVAL;
-                Cacheable = config?.GetValue("cacheable", false) ?? false;
-
-                var formats = config?.GetValue("formats");
-                string ResolveFormat(string key, string defaultValue)
-                {
-                    string value = formats?.GetValue(key, null);
-                    if (!string.IsNullOrWhiteSpace(value))
-                        return value;
-
-                    return globalFormats?.GetValue(key, defaultValue) ?? defaultValue;
-                }
-
-                DiskFormat = new SizeFormat(ResolveFormat("diskFormat", DEFAULT_FORMAT_DISK_SIZE));
-                MemoryFormat = new SizeFormat(ResolveFormat("memoryFormat", DEFAULT_FORMAT_MEMORY_SIZE));
-                DateFormat = ResolveFormat("dateFormat", DEFAULT_FORMAT_DATE);
-                TimeFormat = ResolveFormat("timeFormat", DEFAULT_FORMAT_TIME);
-                DateTimeFormat = ResolveFormat("dateTimeFormat", DEFAULT_FORMAT_DATETIME);
-            }
-
-            public bool PollAgent(AddonRequestType type) =>
-                Enabled && type != AddonRequestType.REQUEST_DISPLAY_INFORMATION;
-
-            public bool IsDue(uint counter) => Enabled && counter % Interval == 0;
-        }
 
         private readonly Dictionary<string, MonitorSettings> _monitorSettings = new Dictionary<string, MonitorSettings>();
         private Dictionary<string, string> _cache = new Dictionary<string, string>();
@@ -155,7 +84,7 @@ namespace IOTLinkAddon.Service
 
                 try
                 {
-                    monitor.Init();
+                    monitor.Init(GetMonitorSettings(monitor.GetConfigKey()));
                 }
                 catch (Exception ex)
                 {
@@ -372,11 +301,7 @@ namespace IOTLinkAddon.Service
             switch (item.Type)
             {
                 case MonitorItemType.TYPE_DISK_SIZE:
-                    value = settings.DiskFormat.Format(item.Value);
-                    break;
-
-                case MonitorItemType.TYPE_MEMORY_SIZE:
-                    value = settings.MemoryFormat.Format(item.Value);
+                    value = settings.DiskFormat.Convert(MathHelper.ToLong(item.Value, 0L)).ToString(CultureInfo.InvariantCulture);
                     break;
 
                 case MonitorItemType.TYPE_NETWORK_SPEED:
@@ -410,7 +335,7 @@ namespace IOTLinkAddon.Service
             }
 
             bool retained = item.Type == MonitorItemType.TYPE_RETAINED_STATE;
-            SendMonitorValue(item.Topic, value, settings.Cacheable || retained, retained);
+            SendMonitorValue(item.Topic, value, settings.Cacheable || item.PublishOnChangeOnly, retained);
         }
 
         private void PublishDiscoveryItem(MonitorItem item)
