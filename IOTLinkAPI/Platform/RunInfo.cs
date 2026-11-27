@@ -8,6 +8,9 @@
 
         public string WorkingDir { get; set; }
 
+        /// <summary>When specified, launch in this session instead of looking up a session by username.</summary>
+        public int? SessionId { get; set; }
+
         public string Username { get; set; }
 
         public bool Visible { get; set; } = true;

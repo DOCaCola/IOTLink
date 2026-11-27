@@ -6,144 +6,196 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 
 namespace IOTLinkService.Service.Engine
 {
     public class AgentManager
     {
-        private static AgentManager _instance;
+        private static readonly AgentManager Instance = new AgentManager(
+            WindowsAPI.GetWindowsSessions, () => Process.GetProcessesByName(PathHelper.APP_AGENT_NAME), LaunchAgent);
 
-        private readonly object getAgentsLock = new object();
-        private readonly object startAgentsLock = new object();
-        private readonly object startAgentLock = new object();
-        private readonly object stopAgentsLock = new object();
+        private readonly object _sync = new object();
+        private readonly Dictionary<int, Process> _agents = new Dictionary<int, Process>();
+        private readonly Func<List<WindowsSessionInfo>> _getSessions;
+        private readonly Func<Process[]> _findAgents;
+        private readonly Action<int> _launchAgent;
+        private bool _rediscover = true;
 
-        public static AgentManager GetInstance()
+        public static AgentManager GetInstance() => Instance;
+
+        internal AgentManager(Func<List<WindowsSessionInfo>> getSessions, Func<Process[]> findAgents, Action<int> launchAgent)
         {
-            if (_instance == null)
-                _instance = new AgentManager();
-
-            return _instance;
-        }
-
-        private AgentManager()
-        {
-            LoggerHelper.Trace("AgentManager instance created.");
+            _getSessions = getSessions;
+            _findAgents = findAgents;
+            _launchAgent = launchAgent;
         }
 
         public List<AgentInfo> GetAgents()
         {
-            lock (getAgentsLock)
+            lock (_sync)
             {
-                LoggerHelper.Trace("GetAgents() - Initialized");
-
-                List<AgentInfo> agents = new List<AgentInfo>();
-
-                Process[] processes = Process.GetProcessesByName(PathHelper.APP_AGENT_NAME);
-                foreach (Process process in processes)
+                var processes = _findAgents();
+                try
                 {
-                    int sessionId = Convert.ToInt32(process.SessionId);
-                    int processId = Convert.ToInt32(process.Id);
-                    string commandLine = process.StartInfo?.Arguments;
-                    string username = PlatformHelper.GetUsername(sessionId);
-
-                    agents.Add(new AgentInfo
+                    return processes.Select(p => new AgentInfo
                     {
-                        SessionId = sessionId,
-                        ProcessId = processId,
-                        CommandLine = commandLine,
-                        Username = username
-                    });
+                        SessionId = p.SessionId,
+                        ProcessId = p.Id,
+                        CommandLine = p.StartInfo.Arguments,
+                        Username = PlatformHelper.GetUsername(p.SessionId)
+                    }).ToList();
                 }
-
-                return agents;
+                finally
+                {
+                    foreach (var process in processes)
+                        process.Dispose();
+                }
             }
+        }
+
+        internal void OnSessionChanged()
+        {
+            lock (_sync)
+                _rediscover = true;
         }
 
         public void StartAgents()
         {
-            lock (startAgentsLock)
+            lock (_sync)
             {
-                LoggerHelper.Trace("StartAgents() - Initialized");
                 try
                 {
-                    List<WindowsSessionInfo> winSessions = WindowsAPI.GetWindowsSessions().FindAll(s => s.IsActive);
-                    foreach (WindowsSessionInfo sessionInfo in winSessions)
+                    if (!_rediscover && !_agents.Values.Any(p => p.HasExited))
+                        return;
+
+                    var sessions = new HashSet<int>(_getSessions().Where(s => s.IsActive).Select(s => s.SessionID));
+                    foreach (int id in _agents.Keys.ToArray())
                     {
-                        LoggerHelper.Trace(
-                            "StartAgents() - Windows Session Found. SessionId: {0} StationName: {1} Username: {2} IsActive: {3}",
-                            sessionInfo.SessionID, sessionInfo.StationName, sessionInfo.Username, sessionInfo.IsActive
-                        );
-                        StartAgent(sessionInfo.SessionID, sessionInfo.Username);
+                        if (!sessions.Contains(id) || _agents[id].HasExited)
+                        {
+                            _agents[id].Dispose();
+                            _agents.Remove(id);
+                        }
                     }
+                    EnsureAgents(sessions);
+                    // WTS can briefly report no active sessions during a logon or resume.
+                    _rediscover = sessions.Count == 0 || _agents.Count != sessions.Count;
                 }
                 catch (Exception ex)
                 {
-                    LoggerHelper.Error("StartAgents() - Exception Handled: {0}", ex.Message);
+                    _rediscover = true;
+                    LoggerHelper.Error("Could not check session agents: {0}", ex);
                 }
             }
         }
 
         public void StartAgent(int sessionId, string username = null)
         {
-            lock (startAgentLock)
+            lock (_sync)
             {
-                LoggerHelper.Trace("StartAgent() - Initialized. SessionId: {0} Username: {1}", sessionId, username);
-                List<AgentInfo> agents = GetAgents();
+                if (!_getSessions().Any(s => s.SessionID == sessionId && s.IsActive &&
+                    (string.IsNullOrWhiteSpace(username) || s.IsUser(username))))
+                    return;
 
-                foreach (AgentInfo agentInfo in agents)
+                if (_agents.TryGetValue(sessionId, out var process))
                 {
-                    LoggerHelper.Trace("StartAgent() - Agent Found. SessionId: {0} PID: {1} Username: {2} CommandLine: {3}", agentInfo.SessionId, agentInfo.ProcessId, agentInfo.Username, agentInfo.CommandLine);
-                    if (agentInfo.SessionId == sessionId)
-                    {
-                        LoggerHelper.Trace("StartAgent() - Agent instance is already running for this user. Skipping.");
+                    if (!process.HasExited)
                         return;
-                    }
+
+                    process.Dispose();
+                    _agents.Remove(sessionId);
                 }
-
-                if (string.IsNullOrWhiteSpace(username))
-                    username = PlatformHelper.GetUsername(sessionId);
-
-                RunInfo runInfo = new RunInfo
-                {
-                    Application = Path.Combine(PathHelper.BaseAppPath(), PathHelper.APP_AGENT_NAME + ".exe"),
-                    CommandLine = "--agent " + WebSocketServerManager.WEBSOCKET_URI,
-                    WorkingDir = PathHelper.BaseAppPath(),
-                    Username = username,
-                    Visible = false,
-                    Fallback = false
-                };
-
-                LoggerHelper.Debug(
-                    "StartAgent() - Executing Run. Application: {0} CommandLine: {1} WorkingDir: {2} Username: {3} Visible: {4} Fallback: {5}",
-                    runInfo.Application, runInfo.CommandLine, runInfo.WorkingDir, runInfo.Username, runInfo.Visible, runInfo.Fallback
-                );
-                PlatformHelper.Run(runInfo);
+                _rediscover = true;
+                EnsureAgents(new HashSet<int> { sessionId });
             }
+        }
+
+        private void EnsureAgents(HashSet<int> sessions)
+        {
+            if (sessions.Count == 0)
+                return;
+
+            AdoptAgents(sessions);
+            var missing = sessions.Where(id => !_agents.ContainsKey(id)).ToArray();
+            foreach (int id in missing)
+                _launchAgent(id);
+
+            if (missing.Length > 0)
+                AdoptAgents(sessions);
+        }
+
+        private void AdoptAgents(HashSet<int> sessions)
+        {
+            var processes = _findAgents();
+            try
+            {
+                for (int i = 0; i < processes.Length; i++)
+                {
+                    var process = processes[i];
+                    int sessionId = process.SessionId;
+                    if (!sessions.Contains(sessionId) || _agents.ContainsKey(sessionId))
+                        continue;
+
+                    try
+                    {
+                        // Opening the handle binds future checks to this process, even if its PID is reused.
+                        _ = process.SafeHandle;
+                        if (!process.HasExited)
+                        {
+                            _agents.Add(sessionId, process);
+                            processes[i] = null; // Ownership moved to the session cache.
+                        }
+                    }
+                    catch (InvalidOperationException) when (process.HasExited) { }
+                }
+            }
+            finally
+            {
+                foreach (var process in processes)
+                    process?.Dispose();
+            }
+        }
+
+        private static void LaunchAgent(int sessionId)
+        {
+            PlatformHelper.Run(new RunInfo
+            {
+                Application = Path.Combine(PathHelper.BaseAppPath(), PathHelper.APP_AGENT_NAME + ".exe"),
+                CommandLine = "--agent " + WebSocketServerManager.WEBSOCKET_URI,
+                WorkingDir = PathHelper.BaseAppPath(),
+                SessionId = sessionId
+            });
         }
 
         public void StopAgents()
         {
-            lock (stopAgentsLock)
+            lock (_sync)
             {
-                LoggerHelper.Trace("StopAgents() - Initialized");
-                List<AgentInfo> agents = GetAgents();
-                foreach (AgentInfo agentInfo in agents)
+                try
                 {
-                    try
+                    // Include existing agents in disconnected sessions and any duplicates.
+                    foreach (var process in _findAgents())
                     {
-                        LoggerHelper.Trace("StopAgents() - Agent Found. SessionId: {0} PID: {1} Username: {2} CommandLine: {3}", agentInfo.SessionId, agentInfo.ProcessId, agentInfo.Username, agentInfo.CommandLine);
-                        Process process = Process.GetProcessById(agentInfo.ProcessId);
-                        if (process != null)
+                        using (process)
                         {
-                            LoggerHelper.Debug("StopAgents() - Process {0} found. Killing it.", process.Id);
-                            process.Kill();
+                            try
+                            {
+                                process.Kill();
+                            }
+                            catch (Exception ex)
+                            {
+                                LoggerHelper.Error("Failed to stop agent {0}: {1}", process.Id, ex.Message);
+                            }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        LoggerHelper.Error("StopAgents() - Failed to Kill PID {0}: {1}", agentInfo.ProcessId, ex.ToString());
-                    }
+                }
+                finally
+                {
+                    foreach (var process in _agents.Values)
+                        process.Dispose();
+                    _agents.Clear();
+                    _rediscover = true;
                 }
             }
         }

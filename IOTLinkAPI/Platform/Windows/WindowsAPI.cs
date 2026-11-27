@@ -276,20 +276,22 @@ namespace IOTLinkAPI.Platform.Windows
 
             try
             {
-                WindowsSessionInfo sessionInfo = GetUserActiveSession(server, runInfo.Username);
-                if (sessionInfo == null && (runInfo.Fallback || string.IsNullOrWhiteSpace(runInfo.Username)))
+                int? sessionId = runInfo.SessionId;
+                if (!sessionId.HasValue)
                 {
-                    LoggerHelper.Debug("WindowsAPI::Run() - User session not found, trying to get first active session.");
-                    sessionInfo = GetFirstActiveSession(server);
+                    var session = GetUserActiveSession(server, runInfo.Username);
+                    if (session == null && (runInfo.Fallback || string.IsNullOrWhiteSpace(runInfo.Username)))
+                        session = GetFirstActiveSession(server);
+                    sessionId = session?.SessionID;
                 }
 
-                if (sessionInfo == null)
+                if (!sessionId.HasValue)
                 {
                     LoggerHelper.Warn("WindowsAPI::Run() - No User/Active session found. Returning.");
                     return false;
                 }
 
-                if (!GetSessionUserToken(server, sessionInfo, ref hUserToken))
+                if (!GetSessionUserToken(sessionId.Value, ref hUserToken))
                 {
                     LoggerHelper.Error("WindowsAPI::Run() - Cannot get session user token.");
                     return false;
@@ -624,11 +626,11 @@ namespace IOTLinkAPI.Platform.Windows
             return true;
         }
 
-        private static bool GetSessionUserToken(IntPtr server, WindowsSessionInfo sessionInfo, ref IntPtr phUserToken)
+        private static bool GetSessionUserToken(int sessionId, ref IntPtr phUserToken)
         {
             var hImpersonationToken = IntPtr.Zero;
             bool bResult = false;
-            if (WtsApi32.WTSQueryUserToken(sessionInfo.SessionID, out hImpersonationToken))
+            if (WtsApi32.WTSQueryUserToken(sessionId, out hImpersonationToken))
             {
                 bResult = AdvApi32.DuplicateTokenEx(hImpersonationToken, 0, IntPtr.Zero, (int)SecurityImpersonationLevel.SecurityImpersonation, (int)TokenType.TokenPrimary, ref phUserToken);
                 Kernel32.CloseHandle(hImpersonationToken);

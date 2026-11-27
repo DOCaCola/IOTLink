@@ -15,6 +15,7 @@ namespace IOTLinkService.Service.Engine
 
         private DateTime _lastConfigChange;
 
+        private readonly object _agentTimerLock = new object();
         private System.Timers.Timer _processMonitorTimer;
 
         public static ServiceMain GetInstance()
@@ -32,24 +33,32 @@ namespace IOTLinkService.Service.Engine
 
         private void OnProcessMonitorTimerElapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
-            _processMonitorTimer.Stop();
-            AgentManager.GetInstance().StartAgents();
-            _processMonitorTimer.Start();
+            lock (_agentTimerLock)
+            {
+                if (sender != _processMonitorTimer)
+                    return;
+
+                AgentManager.GetInstance().StartAgents();
+                _processMonitorTimer.Start();
+            }
         }
 
         public void StartApplication()
         {
-            if (_processMonitorTimer == null)
-            {
-                _processMonitorTimer = new System.Timers.Timer();
-                _processMonitorTimer.Interval = 5 * 1000;
-                _processMonitorTimer.Elapsed += OnProcessMonitorTimerElapsed;
-                _processMonitorTimer.Start();
-            }
-
             MQTTClientManager.GetInstance().Start();
             SetupWebSocket();
             SetupAddons();
+
+            lock (_agentTimerLock)
+            {
+                if (_processMonitorTimer == null)
+                {
+                    _processMonitorTimer = new System.Timers.Timer(5000) { AutoReset = false };
+                    _processMonitorTimer.Elapsed += OnProcessMonitorTimerElapsed;
+                    AgentManager.GetInstance().StartAgents();
+                    _processMonitorTimer.Start();
+                }
+            }
         }
 
         public void SuspendApplication()
@@ -64,13 +73,12 @@ namespace IOTLinkService.Service.Engine
 
         public void StopApplication()
         {
-            if (_processMonitorTimer != null)
+            lock (_agentTimerLock)
             {
-                _processMonitorTimer.Stop();
+                _processMonitorTimer?.Dispose();
                 _processMonitorTimer = null;
+                AgentManager.GetInstance().StopAgents();
             }
-
-            AgentManager.GetInstance().StopAgents();
             MQTTClientManager.GetInstance().Stop();
 
             LoggerHelper.GetInstance().Flush();
@@ -150,6 +158,8 @@ namespace IOTLinkService.Service.Engine
         public void OnSessionChange(string username, int sessionId, SessionChangeReason reason)
         {
             LoggerHelper.Verbose("ServiceMain::OnSessionChange() - Session Changed");
+
+            AgentManager.GetInstance().OnSessionChanged();
 
             SessionChangeEventArgs args = new SessionChangeEventArgs
             {
