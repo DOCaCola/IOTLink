@@ -6,7 +6,7 @@ namespace IOTLinkAPI.Helpers
 {
     public static class ApplicationConfigHelper
     {
-        private const string ENGINE_CONF_FILE = "configuration.yaml";
+        internal static readonly string EngineConfigPath = Path.Combine(PathHelper.ConfigPath(), "configuration.yaml");
 
         public static void Init()
         {
@@ -17,8 +17,7 @@ namespace IOTLinkAPI.Helpers
 
         public static Configuration GetEngineConfig()
         {
-            string path = Path.Combine(PathHelper.ConfigPath(), ENGINE_CONF_FILE);
-            return ConfigurationManager.GetInstance().GetConfiguration(path);
+            return ConfigurationManager.GetInstance().GetConfiguration(EngineConfigPath);
         }
 
         public static void SetEngineConfigReloadHandler(ConfigReloadedHandler configReloadedHandler)
@@ -27,8 +26,7 @@ namespace IOTLinkAPI.Helpers
             if (configuration == null)
                 return;
 
-            string path = Path.Combine(PathHelper.ConfigPath(), ENGINE_CONF_FILE);
-            ConfigurationManager.GetInstance().SetReloadHandler(path, configReloadedHandler, Platform.ConfigType.CONFIGURATION_ENGINE);
+            ConfigurationManager.GetInstance().SetReloadHandler(EngineConfigPath, configReloadedHandler, Platform.ConfigType.CONFIGURATION_ENGINE);
         }
     }
 }

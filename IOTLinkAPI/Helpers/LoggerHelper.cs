@@ -1,4 +1,6 @@
 ﻿using IOTLinkAPI.Configs;
+using IOTLinkAPI.Platform;
+using IOTLinkAPI.Platform.Events;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -11,7 +13,29 @@ namespace IOTLinkAPI.Helpers
 #pragma warning disable 1591
     public class LoggerHelper
     {
-        private static LoggerHelper _instance;
+        private static readonly Lazy<LoggerHelper> Instance = new Lazy<LoggerHelper>(() =>
+            new LoggerHelper(ApplicationConfigHelper.EngineConfigPath, PathHelper.LogsPath()));
+        private readonly string _configPath;
+        private readonly string _logsPath;
+        private readonly object _settingsLock = new object();
+        private volatile LogSettings _settings;
+        private bool _loadingSettings;
+
+        private sealed class LogSettings
+        {
+            internal readonly bool Enabled;
+            internal readonly LogLevel Level;
+
+            internal LogSettings(Configuration config)
+            {
+                if (config != null)
+                {
+                    Enabled = config.GetValue("logging:enabled", true);
+                    Level = (LogLevel)config.GetValue("logging:level", (int)LogLevel.INFO);
+                }
+            }
+        }
+
         private StreamWriter _logWriter;
         private Timer _flushTimer;
 
@@ -39,8 +63,10 @@ namespace IOTLinkAPI.Helpers
             SYSTEM
         }
 
-        private LoggerHelper()
+        internal LoggerHelper(string configPath, string logsPath)
         {
+            _configPath = configPath;
+            _logsPath = logsPath;
             OpenLogFile();
 
             _flushTimer = new Timer();
@@ -89,14 +115,13 @@ namespace IOTLinkAPI.Helpers
         {
             try
             {
-                string logsPath = PathHelper.LogsPath();
-                if (!Directory.Exists(logsPath))
-                    Directory.CreateDirectory(logsPath);
+                if (!Directory.Exists(_logsPath))
+                    Directory.CreateDirectory(_logsPath);
 
                 string prefix = Environment.UserInteractive ? "AgentLog" : "ServiceLog";
                 string date = DateTime.Now.ToString("yyyy_MM_dd");
                 string filename = string.Format("{0}_{1}.log", prefix, date);
-                string path = Path.Combine(logsPath, filename);
+                string path = Path.Combine(_logsPath, filename);
 
                 if (!File.Exists(path))
                     _logWriter = File.CreateText(path);
@@ -134,13 +159,53 @@ namespace IOTLinkAPI.Helpers
             }
         }
 
-        private void WriteLog(LogLevel logLevel, string messageTag, string message, params object[] args)
+        private LogSettings LoadSettings()
         {
-            if (string.IsNullOrWhiteSpace(messageTag) || string.IsNullOrWhiteSpace(message))
+            lock (_settingsLock)
+            {
+                // The configuration reader and the watcher setup both use this logger.
+                if (_settings != null || _loadingSettings)
+                    return _settings;
+
+                _loadingSettings = true;
+                try
+                {
+                    var manager = ConfigurationManager.GetInstance();
+                    var config = manager.GetConfiguration(_configPath);
+                    if (config != null)
+                    {
+                        manager.SetReloadHandler(_configPath, OnSettingsReloaded, ConfigType.CONFIGURATION_ENGINE);
+                        // A watcher may have reloaded the file between our first read and registration.
+                        _settings = new LogSettings(manager.GetConfiguration(_configPath));
+                    }
+                    return _settings;
+                }
+                finally
+                {
+                    _loadingSettings = false;
+                }
+            }
+        }
+
+        private void OnSettingsReloaded(object sender, ConfigReloadEventArgs e)
+        {
+            lock (_settingsLock)
+            {
+                _settings = new LogSettings(ConfigurationManager.GetInstance().GetConfiguration(_configPath));
+            }
+        }
+
+        internal void WriteLog(LogLevel logLevel, string message, params object[] args)
+        {
+            var settings = _settings ?? LoadSettings();
+            if (settings == null || !settings.Enabled || (logLevel > settings.Level && logLevel != LogLevel.SYSTEM))
                 return;
 
-            Configuration config = ApplicationConfigHelper.GetEngineConfig();
-            if (config == null || config.GetValue("logging:enabled", true) == false || (LogLevel)config.GetValue("logging:level", 4) < logLevel && logLevel != LogLevel.SYSTEM)
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            string messageTag = GetCallerInformation();
+            if (string.IsNullOrWhiteSpace(messageTag))
                 return;
 
             string formatedMessage;
@@ -164,52 +229,52 @@ namespace IOTLinkAPI.Helpers
 
         public static void Critical(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.CRITICAL, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.CRITICAL, message, args);
         }
 
         public static void Error(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.ERROR, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.ERROR, message, args);
         }
 
         public static void Warn(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.WARNING, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.WARNING, message, args);
         }
 
         public static void Info(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.INFO, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.INFO, message, args);
         }
 
         public static void Verbose(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.VERBOSE, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.VERBOSE, message, args);
         }
 
         public static void Debug(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.DEBUG, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.DEBUG, message, args);
         }
 
         public static void Trace(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.TRACE, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.TRACE, message, args);
         }
 
         public static void TraceLoop(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.TRACE_LOOP, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.TRACE_LOOP, message, args);
         }
 
         public static void DataDump(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.DATA_DUMP, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.DATA_DUMP, message, args);
         }
 
         public static void System(string message, params object[] args)
         {
-            GetInstance().WriteLog(LogLevel.SYSTEM, GetCallerInformation(), message, args);
+            GetInstance().WriteLog(LogLevel.SYSTEM, message, args);
         }
 
         public static void EmptyLine()
@@ -223,7 +288,7 @@ namespace IOTLinkAPI.Helpers
             {
                 string fullName;
                 Type declaringType;
-                int skipFrames = 2;
+                int skipFrames = 1;
                 do
                 {
                     StackFrame stackFrame = new StackFrame(skipFrames, false);
@@ -236,7 +301,7 @@ namespace IOTLinkAPI.Helpers
                     skipFrames++;
                     fullName = declaringType?.FullName;
                 }
-                while (declaringType != null && declaringType.Module.Name.Equals("mscorlib.dll", StringComparison.OrdinalIgnoreCase));
+                while (declaringType == typeof(LoggerHelper) || declaringType.Module.Name.Equals("mscorlib.dll", StringComparison.OrdinalIgnoreCase));
 
                 return Regex.Replace(fullName, "(.*)\\+([A-Za-z0-9_<>]+)(.*)", "$1$3");
             }
@@ -248,10 +313,7 @@ namespace IOTLinkAPI.Helpers
 
         public static LoggerHelper GetInstance()
         {
-            if (_instance == null)
-                _instance = new LoggerHelper();
-
-            return _instance;
+            return Instance.Value;
         }
     }
 }
