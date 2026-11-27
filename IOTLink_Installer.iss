@@ -4,7 +4,7 @@
 #define APP_DIR_NAME     "IOTLink"
 #define APP_AGENT_NAME   "IOTLinkAgent.exe"
 #define APP_SERVICE_NAME "IOTLinkService.exe"
-#define APP_VERSION      "2.4.0"
+#define APP_VERSION      "2.4.1"
 #ifndef StageDir
 #error Build the installer with Build-Installer.ps1
 #endif
@@ -33,7 +33,7 @@ UsePreviousAppDir=yes
 OutputDir=Setup
 OutputBaseFilename={#APP_DIR_NAME}_Installer_v{#APP_VERSION}-net11-win-x64
 ArchitecturesAllowed=x64
-MinVersion=10.0.19041
+MinVersion=10.0.17763
 WizardStyle=modern
 AllowNoIcons=yes
 LicenseFile=LICENSE.md

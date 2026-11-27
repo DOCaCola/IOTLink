@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1](https://github.com/DOCaCola/IOTLink/releases/tag/v2.4.1) - 2026-11-27
+
+- Lowered the Windows target and x64 installer minimum to build 17763 so Windows 10 Enterprise LTSC 2019 (version 1809) passes the installer’s version check.
+
 ## [2.4.0](https://github.com/DOCaCola/IOTLink/releases/tag/v2.4.0) - 2026-11-27
 
 - The Windows service, agent, API, and bundled add-ons now run on .NET 11. The x64 installer includes the runtime and targets Windows 10 build 19041 or later.

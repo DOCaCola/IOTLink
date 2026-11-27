@@ -14,7 +14,7 @@ IOT Link is a full featured service for connecting devices with IOT enabled serv
 
 ### Building on Windows
 
-IOT Link development targets .NET 11. The installer built from `develop` includes the runtime and supports x64 Windows 10 build 19041 or later. Installing the Windows service requires administrator rights.
+IOT Link development targets .NET 11. The installer built from `develop` includes the runtime and supports x64 Windows 10 build 17763 (version 1809, including Enterprise LTSC 2019) or later. Installing the Windows service requires administrator rights.
 
 To build and test on Windows, install the .NET 11 SDK and run these commands from the repository root.
 
