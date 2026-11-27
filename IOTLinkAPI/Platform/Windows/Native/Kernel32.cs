@@ -7,6 +7,9 @@ namespace IOTLinkAPI.Platform.Windows.Native
 #pragma warning disable 1591
     public class Kernel32
     {
+        [DllImport("kernel32.dll")]
+        public static extern ulong GetTickCount64();
+
         [DllImport("kernel32.dll", EntryPoint = "CloseHandle", CharSet = CharSet.Auto)]
         public static extern bool CloseHandle(IntPtr hHandle);
 

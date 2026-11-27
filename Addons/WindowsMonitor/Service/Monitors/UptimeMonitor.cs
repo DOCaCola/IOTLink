@@ -1,33 +1,15 @@
 ﻿using IOTLinkAPI.Configs;
 using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.HomeAssistant;
+using IOTLinkAPI.Platform.Windows.Native;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 
 namespace IOTLinkAddon.Service.Monitors
 {
-    class UptimeMonitor : BaseMonitor, IDisposable
+    class UptimeMonitor : BaseMonitor
     {
         private static readonly string CONFIG_KEY = "Uptime";
-
-        private PerformanceCounter _uptimePerformanceCounter;
-
-        public override void Init()
-        {
-            if (_uptimePerformanceCounter != null)
-                return;
-
-            _uptimePerformanceCounter = new PerformanceCounter("System", "System Up Time");
-
-            _uptimePerformanceCounter.NextValue();
-        }
-
-        public void Dispose()
-        {
-            _uptimePerformanceCounter?.Dispose();
-            _uptimePerformanceCounter = null;
-        }
 
         public override string GetConfigKey()
         {
@@ -55,18 +37,19 @@ namespace IOTLinkAddon.Service.Monitors
             });
 
             // Uptime
+            bool inSeconds = config.GetValue("inSeconds", false);
             result.Add(new MonitorItem
             {
                 ConfigKey = CONFIG_KEY,
-                Type = config.GetValue("inSeconds", false) ? MonitorItemType.TYPE_RAW : MonitorItemType.TYPE_UPTIME,
+                Type = inSeconds ? MonitorItemType.TYPE_RAW : MonitorItemType.TYPE_UPTIME,
                 Topic = "Stats/System/Uptime",
-                Value = Math.Round(_uptimePerformanceCounter.NextValue(), 0),
+                Value = Math.Round(Kernel32.GetTickCount64() / 1000d, 0),
                 DiscoveryOptions = new HassDiscoveryOptions()
                 {
                     Component = HomeAssistantComponent.Sensor,
                     Id = "Uptime",
                     Name = "System Uptime",
-                    Unit = config.GetValue("inSeconds", false) ? "s" : null,
+                    Unit = inSeconds ? "s" : null,
                     Icon = "mdi:timer-outline"
                 }
             });
