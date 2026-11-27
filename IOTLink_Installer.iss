@@ -4,7 +4,7 @@
 #define APP_DIR_NAME     "IOTLink"
 #define APP_AGENT_NAME   "IOTLinkAgent.exe"
 #define APP_SERVICE_NAME "IOTLinkService.exe"
-#define APP_VERSION      "2.3.0"
+#define APP_VERSION      "2.3.1"
 #define APP_BETA_VERSION ""
 
 #define APP_PUBLISHER "DOCaCola (IOTLink fork)"

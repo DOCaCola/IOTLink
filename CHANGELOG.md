@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1](https://github.com/DOCaCola/IOTLink/releases/tag/v2.3.1) - 2026-11-27
+
+- Updated Newtonsoft.Json to 13.0.4 across the service, agent, API, and bundled add-ons to address [CVE-2024-21907](https://github.com/advisories/GHSA-5crp-9r3c-p9vr).
+
 ## [2.3.0](https://github.com/DOCaCola/IOTLink/releases/tag/v2.3.0) - 2026-11-27
 
 - WindowsMonitor publishes per-display desktop and active signal dimensions, refresh rate, monitor name, active HDR state, primary display flag, connector type, and rotation over MQTT with Home Assistant discovery.
