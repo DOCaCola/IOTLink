@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/DOCaCola/IOTLink/releases/tag/v2.4.0) - 2026-11-27
+
+- The Windows service, agent, API, and bundled add-ons now run on .NET 11. The x64 installer includes the runtime and targets Windows 10 build 19041 or later.
+- The installer upgrades an existing service in place and preserves installed add-on manifests and ProcessMonitor application definitions.
+- The agent uses the built-in .NET WebSocket client. WindowsMonitor uses the matching display adapter name when Windows leaves the monitor name blank.
+
 ## [2.3.1](https://github.com/DOCaCola/IOTLink/releases/tag/v2.3.1) - 2026-11-27
 
 - Updated Newtonsoft.Json to 13.0.4 across the service, agent, API, and bundled add-ons to address [CVE-2024-21907](https://github.com/advisories/GHSA-5crp-9r3c-p9vr).

@@ -1,5 +1,6 @@
 <Project>
   <PropertyGroup>
+    <Version>2.4.0</Version>
     <TargetFramework>net11.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
