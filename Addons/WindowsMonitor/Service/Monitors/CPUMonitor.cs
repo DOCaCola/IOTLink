@@ -1,8 +1,8 @@
 ﻿using IOTLinkAPI.Configs;
 using IOTLinkAPI.Platform.HomeAssistant;
+using IOTLinkAPI.Platform.Windows;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 
 namespace IOTLinkAddon.Service.Monitors
 {
@@ -10,22 +10,20 @@ namespace IOTLinkAddon.Service.Monitors
     {
         private static readonly string CONFIG_KEY = "CPU";
 
-        private PerformanceCounter _cpuPerformanceCounter;
+        private CpuUsageSampler _cpuUsage;
 
         public override void Init()
         {
-            if (_cpuPerformanceCounter != null)
+            if (_cpuUsage != null)
                 return;
 
-            _cpuPerformanceCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
-
-            _cpuPerformanceCounter.NextValue();
+            _cpuUsage = new CpuUsageSampler();
+            _cpuUsage.NextValue();
         }
 
         public void Dispose()
         {
-            _cpuPerformanceCounter?.Dispose();
-            _cpuPerformanceCounter = null;
+            _cpuUsage = null;
         }
 
         public override string GetConfigKey()
@@ -43,7 +41,7 @@ namespace IOTLinkAddon.Service.Monitors
                 ConfigKey = CONFIG_KEY,
                 Type = MonitorItemType.TYPE_RAW,
                 Topic = "Stats/CPU/Usage",
-                Value = Math.Round(_cpuPerformanceCounter.NextValue(), 0),
+                Value = Math.Round(_cpuUsage.NextValue(), 0),
                 DiscoveryOptions = new HassDiscoveryOptions()
                 {
                     Id = "Usage",

@@ -7,6 +7,29 @@ namespace IOTLinkAPI.Platform.Windows.Native
 #pragma warning disable 1591
     public class Kernel32
     {
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct GroupAffinity
+        {
+            internal UIntPtr Mask;
+            internal ushort Group;
+            private ushort reserved0, reserved1, reserved2;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern bool GetSystemTimes(out long idle, out long kernel, out long user);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern uint GetActiveProcessorCount(ushort group);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern ushort GetActiveProcessorGroupCount();
+
+        [DllImport("kernel32.dll")]
+        internal static extern IntPtr GetCurrentThread();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern bool SetThreadGroupAffinity(IntPtr thread, ref GroupAffinity affinity, IntPtr previousAffinity);
+
         [DllImport("kernel32.dll")]
         public static extern ulong GetTickCount64();
 
