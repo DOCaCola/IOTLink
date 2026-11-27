@@ -6,7 +6,7 @@ IOT Link is a full featured service for connecting devices with IOT enabled serv
 ### Features
 
 - Open source software.
-- Easy Installer provided.
+- Download the Windows installer from [GitHub Releases](https://github.com/DOCaCola/IOTLink/releases/latest).
 - Minimal configuration setup.
 - Changes to engine configuration will be reloaded **automatically**.
 - Widely customizable using [Addons](https://gitlab.com/iotlink/iotlink/wikis/Addons/Home).

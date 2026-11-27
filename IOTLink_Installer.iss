@@ -4,11 +4,11 @@
 #define APP_DIR_NAME     "IOTLink"
 #define APP_AGENT_NAME   "IOTLinkAgent.exe"
 #define APP_SERVICE_NAME "IOTLinkService.exe"
-#define APP_VERSION      "2.2.3"
-#define APP_BETA_VERSION "beta1"
+#define APP_VERSION      "2.3.0"
+#define APP_BETA_VERSION ""
 
-#define APP_AUTHOR_NAME "Alexandre Leites"
-#define APP_AUTHOR_URL  "https://www.alexandreleites.com.br"
+#define APP_PUBLISHER "DOCaCola (IOTLink fork)"
+#define APP_URL "https://github.com/DOCaCola/IOTLink"
 
 #include "donate.iss"
 
@@ -19,10 +19,10 @@ AppName={#APP_NAME}
 AppVersion={#APP_VERSION}
 VersionInfoVersion={#APP_VERSION}
 ; Publisher Information
-AppPublisher={#APP_AUTHOR_NAME}
-AppPublisherURL={#APP_AUTHOR_URL}
-AppSupportURL={#APP_AUTHOR_URL}
-AppUpdatesURL={#APP_AUTHOR_URL}
+AppPublisher={#APP_PUBLISHER}
+AppPublisherURL={#APP_URL}
+AppSupportURL={#APP_URL}/issues
+AppUpdatesURL={#APP_URL}/releases
 ; Installation Directort Settings
 DefaultDirName={commonpf}\{#APP_DIR_NAME}
 DefaultGroupName={#APP_NAME}

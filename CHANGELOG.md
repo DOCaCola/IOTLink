@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0](https://github.com/DOCaCola/IOTLink/releases/tag/v2.3.0) - 2026-11-27
+
+- WindowsMonitor publishes per-display desktop and active signal dimensions, refresh rate, monitor name, active HDR state, primary display flag, connector type, and rotation over MQTT with Home Assistant discovery.
+- The agent caches display information and refreshes it when Windows reports a change. WindowsMonitor reduces repeated CPU, network, disk, uptime, and user queries. MQTT topic formatting and discovery metadata are cached.
+- MQTT clients stop their reconnect workers on shutdown. Disabled monitors release their resources, inactive process entries expire, and configuration reloads reuse identical agent add-on assemblies.
+- Fragmented screenshots use less temporary memory. The service reuses per-session agent handles and skips caller lookup for suppressed log messages.
+
 ## [Example - Keep at bottom of this file]
 ### Added
 - Added CHANGELOG file. [@alexslx](https://gitlab.com/alexslx).
