@@ -4,7 +4,7 @@
 #define APP_DIR_NAME     "IOTLink"
 #define APP_AGENT_NAME   "IOTLinkAgent.exe"
 #define APP_SERVICE_NAME "IOTLinkService.exe"
-#define APP_VERSION      "2.4.1"
+#define APP_VERSION      "3.0.0"
 #ifndef StageDir
 #error Build the installer with Build-Installer.ps1
 #endif

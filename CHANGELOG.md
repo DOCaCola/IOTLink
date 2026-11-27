@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0](https://github.com/DOCaCola/IOTLink/releases/tag/v3.0.0) - 2026-11-27
+
+- **Breaking MQTT change.** Display, memory, network, disk, and power/battery readings now use retained JSON snapshots. Under the machine prefix, subscribe to `windows-monitor/stats/display/state`, `windows-monitor/stats/memory/state`, `windows-monitor/stats/network/state`, `windows-monitor/stats/hard-drive/state`, or `windows-monitor/stats/power/state`. Update direct subscribers and automations that use the retired per-value topics. Home Assistant discovery points the existing entities at the new snapshots.
+- Each enabled ProcessMonitor publishes `process-monitor/processes/<monitor>/state` with `state` and `details`. Read `state` for `ON` or `OFF`. A stopped process or a filter mismatch has `details: null`. The separate `/sensor` topic is retired.
+- Display updates respond to Windows display and HDR changes. Network readings are keyed by adapter ID and disks by drive letter. Disk space available to the current account is distinct from total free space. Unavailable battery estimates are JSON `null`.
+- Screenshots default to disabled on new installations. Upgrades preserve existing configuration. The installer donation button has been removed.
+- Fixed add-on version checks across major and minor version boundaries so existing compatible manifests load on 3.0.
+
 ## [2.4.1](https://github.com/DOCaCola/IOTLink/releases/tag/v2.4.1) - 2026-11-27
 
 - Lowered the Windows target and x64 installer minimum to build 17763 so Windows 10 Enterprise LTSC 2019 (version 1809) passes the installer’s version check.
