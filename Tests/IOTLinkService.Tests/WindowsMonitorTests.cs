@@ -20,6 +20,14 @@ namespace IOTLinkService.Tests
     public class WindowsMonitorTests
     {
         [TestMethod]
+        public void CurrentUserFallsBackToSystemWhenTheConsoleOrSessionIsUnavailable()
+        {
+            // Windows also uses uint.MaxValue to mean the caller's session in WTS queries.
+            Assert.AreEqual("SYSTEM", IOTLinkAPI.Platform.Windows.WindowsAPI.GetConsoleUsername(uint.MaxValue));
+            Assert.AreEqual("SYSTEM", IOTLinkAPI.Platform.Windows.WindowsAPI.GetConsoleUsername(uint.MaxValue - 1));
+        }
+
+        [TestMethod]
         public void MasterSwitchStopsMonitoringAndCanBeReenabledByConfigReload()
         {
             string directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))).FullName;

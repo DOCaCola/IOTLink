@@ -434,26 +434,27 @@ namespace IOTLinkAPI.Platform.Windows
 
         public static string GetCurrentUser()
         {
+            return GetConsoleUsername(Kernel32.WTSGetActiveConsoleSessionId());
+        }
+
+        internal static string GetConsoleUsername(uint sessionId)
+        {
+            if (sessionId == INVALID_SESSION_ID)
+                return "SYSTEM";
+
+            if (!WtsApi32.WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, sessionId,
+                    WtsApi32.WtsInfoClass.WTSUserName, out IntPtr buffer, out _))
+                return "SYSTEM";
+
             try
             {
-                using (ManagementClass mc = new ManagementClass("Win32_ComputerSystem"))
-                {
-                    using (ManagementObjectCollection moc = mc.GetInstances())
-                    {
-                        foreach (ManagementObject mo in moc)
-                        {
-                            string value = mo.Properties["UserName"].Value.ToString();
-                            return value.Substring(value.LastIndexOf('\\') + 1);
-                        }
-                    }
-                }
+                string username = Marshal.PtrToStringUni(buffer);
+                return string.IsNullOrEmpty(username) ? "SYSTEM" : username;
             }
-            catch (Exception)
+            finally
             {
-                return "SYSTEM";
+                WtsApi32.WTSFreeMemory(buffer);
             }
-
-            return "SYSTEM";
         }
 
         public static DateTimeOffset LastBootUpTime()

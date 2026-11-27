@@ -38,7 +38,7 @@ namespace IOTLinkAPI.Helpers
         }
 
         /// <summary>
-        /// Return the username from the current session
+        /// Return the active physical console's username, or SYSTEM if it is unavailable.
         /// </summary>
         /// <returns>String</returns>
         public static string GetCurrentUsername()

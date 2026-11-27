@@ -67,6 +67,9 @@ namespace IOTLinkAPI.Platform.Windows.Native
         [DllImport("wtsapi32.dll")]
         public static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, WtsInfoClass wtsInfoClass, out IntPtr ppBuffer, out uint pBytesReturned);
 
+        [DllImport("wtsapi32.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        internal static extern bool WTSQuerySessionInformationW(IntPtr hServer, uint sessionId, WtsInfoClass wtsInfoClass, out IntPtr ppBuffer, out uint pBytesReturned);
+
         [DllImport("wtsapi32.dll")]
         public static extern void WTSFreeMemory(IntPtr pMemory);
 
