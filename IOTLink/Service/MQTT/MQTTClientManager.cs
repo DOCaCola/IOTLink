@@ -1,9 +1,10 @@
+using IOTLinkAPI.Configs;
 using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.Events.MQTT;
 using IOTLinkAPI.Platform.HomeAssistant;
-using Microsoft.Win32;
+using MQTTnet;
+using MQTTnet.Extensions.ManagedClient;
 using System;
-using System.Threading.Tasks;
 using System.Timers;
 using static IOTLinkAPI.Platform.Events.MQTT.MQTTHandlers;
 
@@ -18,25 +19,24 @@ namespace IOTLinkService.Service.MQTT
             CONNECTED = 2
         }
 
-        private static readonly int MINIMUM_DELAY_VERIFY_CONNECTION = 5;
+        private const int InitialVerificationInterval = 60000;
+        private const int VerificationInterval = 10000;
+        private const int RefreshInterval = 60000;
 
-        private static readonly int REFRESH_TIMER_INTERVAL = 60 * 1000;
+        private static readonly MQTTClientManager Instance = new MQTTClientManager(
+            () => MqttConfig.FromConfiguration(ApplicationConfigHelper.GetEngineConfig()?.GetValue("mqtt")),
+            () => new MqttFactory().CreateManagedMqttClient());
 
-        private static readonly int VERIFY_TIMER_INITAL_INTERVAL = 60 * 1000;
-        private static readonly int VERIFY_TIMER_NORMAL_INTERVAL = 10 * 1000;
-
-        private static MQTTClientManager _instance;
-
-        private MQTTClient _mqttClient;
-
-        private Timer _verifyTimer;
-        private Timer _refreshTimer;
-
-        private DateTime lastVerifyConnection = new DateTime(0L);
-
-        private readonly object connectionLock = new object();
-        private readonly object verifyLock = new object();
+        private readonly Func<MqttConfig> _loadConfig;
+        private readonly Func<IManagedMqttClient> _createClient;
+        private readonly Timer _verifyTimer = new Timer(InitialVerificationInterval) { AutoReset = false };
+        private readonly Timer _refreshTimer = new Timer(RefreshInterval);
+        private readonly object lifecycleLock = new object();
         private readonly object publishLock = new object();
+        private MQTTClient _mqttClient;
+        private bool _running;
+        private bool _disposed;
+        private bool _publishFailed;
 
         private EventType lastFiredEvent = EventType.INITIAL;
 
@@ -47,71 +47,78 @@ namespace IOTLinkService.Service.MQTT
 
         public static MQTTClientManager GetInstance()
         {
-            if (_instance == null)
-                _instance = new MQTTClientManager();
-
-            return _instance;
+            return Instance;
         }
 
-        private MQTTClientManager()
+        internal MQTTClientManager(Func<MqttConfig> loadConfig, Func<IManagedMqttClient> createClient)
         {
-            if (_verifyTimer == null)
-                _verifyTimer = new Timer();
-
-            _verifyTimer.Interval = VERIFY_TIMER_INITAL_INTERVAL;
+            _loadConfig = loadConfig;
+            _createClient = createClient;
             _verifyTimer.Elapsed += OnVerifyTimerElapsed;
-            _verifyTimer.AutoReset = true;
-            _verifyTimer.Enabled = true;
-
-            if (_refreshTimer == null)
-                _refreshTimer = new Timer();
-
-            _refreshTimer.Interval = REFRESH_TIMER_INTERVAL;
             _refreshTimer.Elapsed += OnRefreshTimerElapsed;
-            _refreshTimer.AutoReset = true;
-            _refreshTimer.Enabled = true;
-
-            SystemEvents.PowerModeChanged += OnPowerModeChanged;
         }
 
-        public async void Start()
+        public void Start()
         {
-            LoggerHelper.Info("MQTTClientManager::Start() - Initilizing MQTT");
-            await Task.Run(() => Connect());
+            lock (lifecycleLock)
+            {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(MQTTClientManager));
+                if (_running)
+                    return;
+
+                Connect();
+                _running = true;
+                _verifyTimer.Interval = InitialVerificationInterval;
+                _verifyTimer.Start();
+                _refreshTimer.Start();
+            }
         }
 
-        public async void Stop()
+        public void Stop()
         {
-            LoggerHelper.Info("MQTTClientManager::Stop() - Finishing MQTT");
-            await Task.Run(() => Disconnect());
+            lock (lifecycleLock)
+            {
+                if (!_running)
+                    return;
+
+                _running = false;
+                _verifyTimer.Stop();
+                _refreshTimer.Stop();
+                Disconnect();
+            }
+        }
+
+        internal void ReloadConfiguration()
+        {
+            lock (lifecycleLock)
+            {
+                if (_running)
+                {
+                    Disconnect();
+                    Connect();
+                }
+            }
         }
 
         public void Dispose()
         {
-            LoggerHelper.Verbose("MQTTClientManager::Dispose()");
-            if (_mqttClient != null)
-                _mqttClient.Disconnect();
+            lock (lifecycleLock)
+            {
+                if (_disposed)
+                    return;
 
-            _mqttClient = null;
-        }
-
-        internal void CleanEvents()
-        {
-            OnMQTTConnected = null;
-            OnMQTTDisconnected = null;
-            OnMQTTMessageReceived = null;
-            OnMQTTRefreshMessageReceived = null;
-        }
-
-        internal void BindEvents()
-        {
-            if (_mqttClient == null)
-                return;
-
-            _mqttClient.OnMQTTConnected += OnMQTTConnectedHandler;
-            _mqttClient.OnMQTTDisconnected += OnMQTTDisconnectedHandler;
-            _mqttClient.OnMQTTMessageReceived += OnMQTTMessageReceivedHandler;
-            _mqttClient.OnMQTTRefreshMessageReceived += OnMQTTRefreshMessageReceivedHandler;
+                try
+                {
+                    Stop();
+                }
+                finally
+                {
+                    _disposed = true;
+                    _verifyTimer.Dispose();
+                    _refreshTimer.Dispose();
+                }
+            }
         }
 
         internal void PublishMessage(string addonTopic, string message)
@@ -122,14 +129,12 @@ namespace IOTLinkService.Service.MQTT
 
                 try
                 {
-                    VerifyConnection();
-
-                    _mqttClient.PublishMessage(addonTopic, message);
+                    _mqttClient?.PublishMessage(addonTopic, message);
                 }
                 catch (Exception ex)
                 {
                     LoggerHelper.Error("MQTTClientManager::PublishMessage('{0}', '{1}') -> {2}", addonTopic, message, ex.Message);
-                    Disconnect(true);
+                    _publishFailed = true;
                 }
             }
         }
@@ -142,14 +147,12 @@ namespace IOTLinkService.Service.MQTT
 
                 try
                 {
-                    VerifyConnection();
-
-                    _mqttClient.PublishMessage(topic, message);
+                    _mqttClient?.PublishMessage(topic, message);
                 }
                 catch (Exception ex)
                 {
                     LoggerHelper.Error("MQTTClientManager::PublishMessage('{0}', '{1}') -> {2}", topic, message, ex.Message);
-                    Disconnect(true);
+                    _publishFailed = true;
                 }
             }
         }
@@ -162,137 +165,101 @@ namespace IOTLinkService.Service.MQTT
 
                 try
                 {
-                    VerifyConnection();
-
-                    _mqttClient.PublishDiscoveryMessage(addonTopic, preffixName, discoveryOptions);
+                    _mqttClient?.PublishDiscoveryMessage(addonTopic, preffixName, discoveryOptions);
                 }
                 catch (Exception ex)
                 {
                     LoggerHelper.Error("MQTTClientManager::PublishDiscoveryMessage('{0}', '{1}', '{2}') -> {3}", addonTopic, preffixName, discoveryOptions, ex.Message);
-                    Disconnect(true);
+                    _publishFailed = true;
                 }
             }
         }
 
         private void Connect()
         {
-            lock (connectionLock)
-            {
-                LoggerHelper.Verbose("MQTTClientManager::Connect()");
-                if (_mqttClient == null)
-                {
-                    _mqttClient = MQTTClient.GetInstance();
-                    _mqttClient.Init();
-                }
+            var client = new MQTTClient();
+            if (!client.Init(_loadConfig()))
+                return;
 
-                lastFiredEvent = EventType.INITIAL;
-                BindEvents();
-                _mqttClient.Connect();
-                _verifyTimer.Start();
+            client.OnMQTTConnected += OnMQTTConnectedHandler;
+            client.OnMQTTDisconnected += OnMQTTDisconnectedHandler;
+            client.OnMQTTMessageReceived += OnMQTTMessageReceivedHandler;
+            client.OnMQTTRefreshMessageReceived += OnMQTTRefreshMessageReceivedHandler;
+            try
+            {
+                lock (publishLock)
+                {
+                    _mqttClient = client;
+                    _publishFailed = false;
+                    client.Connect(_createClient());
+                }
+            }
+            catch
+            {
+                Disconnect(true);
+                throw;
             }
         }
 
         private void Disconnect(bool skipLastWill = false)
         {
-            lock (connectionLock)
+            MQTTClient client;
+            lock (publishLock)
             {
-                LoggerHelper.Verbose("MQTTClientManager::Disconnect({0})", skipLastWill);
-                if (_mqttClient == null)
-                    return;
-
-                _verifyTimer.Stop();
-
-                _mqttClient.CleanEvents();
-                _mqttClient.Disconnect(skipLastWill);
+                client = _mqttClient;
                 _mqttClient = null;
-                lastFiredEvent = EventType.INITIAL;
             }
-        }
 
-        private void VerifyConnection()
-        {
-            lock (verifyLock)
+            // A callback can publish while MQTTnet waits for it to finish in StopAsync.
+            if (client != null)
             {
-                if (_mqttClient == null)
-                {
-                    LoggerHelper.Warn("MQTTClientManager::VerifyConnection() - MQTT Client NOT Connected. Connecting.");
-                    lastVerifyConnection = DateTime.UtcNow;
-                    Connect();
-                    return;
-                }
-
-                if (lastVerifyConnection.AddSeconds(MINIMUM_DELAY_VERIFY_CONNECTION) >= DateTime.UtcNow)
-                {
-                    LoggerHelper.Trace("MQTTClientManager::VerifyConnection() - Skipping verification [Delay].");
-                    return;
-                }
-
-                lastVerifyConnection = DateTime.UtcNow;
-                if (!_mqttClient.IsConnected())
-                {
-                    LoggerHelper.Warn("MQTTClientManager::VerifyConnection() - MQTT Connection Broken. Reconnecting.");
-
-                    Disconnect(true);
-                    Connect();
-                }
+                client.CleanEvents();
+                client.Disconnect(skipLastWill);
             }
+            lastFiredEvent = EventType.INITIAL;
         }
 
         private void OnVerifyTimerElapsed(object sender, ElapsedEventArgs e)
         {
-            try
+            lock (lifecycleLock)
             {
-                LoggerHelper.Debug("MQTTClientManager::OnVerifyTimerElapsed() - Checking MQTT Connection.");
+                if (!_running)
+                    return;
 
-                _verifyTimer.Stop();
-                VerifyConnection();
-            }
-            catch (Exception ex)
-            {
-                LoggerHelper.Error("MQTTClientManager::OnVerifyTimerElapsed() - Error: {0}", ex);
-            }
-            finally
-            {
-                _verifyTimer.Interval = VERIFY_TIMER_NORMAL_INTERVAL;
-                _verifyTimer.Start();
+                try
+                {
+                    lock (publishLock)
+                    {
+                        if (!_publishFailed && _mqttClient != null && _mqttClient.IsConnected())
+                            return;
+                    }
+                    Disconnect(true);
+                    Connect();
+                }
+                catch (Exception ex)
+                {
+                    LoggerHelper.Error("MQTT connection verification failed: {0}", ex);
+                }
+                finally
+                {
+                    _verifyTimer.Interval = VerificationInterval;
+                    _verifyTimer.Start();
+                }
             }
         }
 
         private void OnRefreshTimerElapsed(object sender, ElapsedEventArgs e)
         {
-            try
+            lock (publishLock)
             {
-                LoggerHelper.Debug("MQTTClientManager::OnRefreshTimerElapsed() - Refreshing LWT");
-
-                _refreshTimer.Stop();
-                if (_mqttClient != null)
-                    _mqttClient.SendLWTConnect();
-            }
-            catch (Exception ex)
-            {
-                LoggerHelper.Error("MQTTClientManager::OnRefreshTimerElapsed() - Error: {0}", ex);
-            }
-            finally
-            {
-                _refreshTimer.Interval = REFRESH_TIMER_INTERVAL;
-                _refreshTimer.Start();
-            }
-        }
-
-        private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
-        {
-            switch (e.Mode)
-            {
-                case PowerModes.Suspend:
-                    Stop();
-                    break;
-
-                case PowerModes.Resume:
-                    Disconnect(true);
-                    Connect();
-                    break;
-
-                default: break;
+                try
+                {
+                    _mqttClient?.SendLWTConnect();
+                }
+                catch (Exception ex)
+                {
+                    LoggerHelper.Error("MQTT LWT refresh failed: {0}", ex);
+                }
             }
         }
 

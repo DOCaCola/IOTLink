@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.6.4" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.6.4" />
+    <PackageReference Include="MQTTnet.Extensions.ManagedClient" Version="3.0.12" />
+    <ProjectReference Include="..\..\IOTLink\IOTLinkService.csproj" />
+    <ProjectReference Include="..\..\IOTLinkAPI\IOTLinkAPI.csproj" />
+  </ItemGroup>
+</Project>

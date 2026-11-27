@@ -33,3 +33,5 @@ using System.Runtime.InteropServices;
 // [assembly: AssemblyVersion("1.0.*")]
 [assembly: AssemblyVersion("2.2.3.0")]
 [assembly: AssemblyFileVersion("2.2.3.0")]
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("IOTLinkService.Tests")]

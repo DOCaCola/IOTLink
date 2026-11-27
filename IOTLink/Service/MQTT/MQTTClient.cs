@@ -19,8 +19,6 @@ namespace IOTLinkService.Service.MQTT
 {
     internal class MQTTClient
     {
-        private static MQTTClient _instance;
-
         private MqttConfig _config;
 
         private IManagedMqttClient _client;
@@ -35,26 +33,13 @@ namespace IOTLinkService.Service.MQTT
         public event MQTTMessageEventHandler OnMQTTMessageReceived;
         public event MQTTRefreshMessageEventHandler OnMQTTRefreshMessageReceived;
 
-        public static MQTTClient GetInstance()
-        {
-            if (_instance == null)
-                _instance = new MQTTClient();
-
-            return _instance;
-        }
-
-        private MQTTClient()
-        {
-            LoggerHelper.Trace("MQTTClient::MQTTClient() - Instance created.");
-        }
-
         /// <summary>
         /// Initialize the MQTT Client.
         /// </summary>
         /// <returns>Boolean</returns>
-        internal bool Init()
+        internal bool Init(MqttConfig config)
         {
-            _config = MqttConfig.FromConfiguration(ApplicationConfigHelper.GetEngineConfig().GetValue("mqtt"));
+            _config = config;
 
             // Configuration not found
             if (_config == null)
@@ -160,13 +145,13 @@ namespace IOTLinkService.Service.MQTT
         /// Try to connect to the configured broker.
         /// Every attempt a delay of (5 * attemps, max 60) seconds is executed.
         /// </summary>
-        internal void Connect()
+        internal void Connect(IManagedMqttClient client)
         {
             lock (connectionRequestLock)
             {
+                _client = client;
                 LoggerHelper.Info("MQTTClient::Connect() - Trying to connect to broker: {0}.", GetBrokerInfo());
 
-                _client = new MqttFactory().CreateManagedMqttClient();
                 _client.UseConnectedHandler(OnConnectedHandler);
                 _client.UseDisconnectedHandler(OnDisconnectedHandler);
                 _client.UseApplicationMessageReceivedHandler(OnApplicationMessageReceivedHandler);
@@ -196,19 +181,22 @@ namespace IOTLinkService.Service.MQTT
                 if (_client == null)
                     return;
 
-                if (_client.IsConnected && !skipLastWill)
-                {
-                    LoggerHelper.Verbose("MQTTClient::Disconnect({0}) - Sending LWT message before disconnecting.", skipLastWill);
-                    SendLWTDisconnect();
-                }
-
                 try
                 {
-                    _client.StopAsync().GetAwaiter().GetResult();
-                    _client.Dispose();
+                    try
+                    {
+                        if (!skipLastWill)
+                            SendLWTDisconnect();
+                    }
+                    finally
+                    {
+                        if (_client.IsStarted)
+                            _client.StopAsync().GetAwaiter().GetResult();
+                    }
                 }
                 finally
                 {
+                    _client.Dispose();
                     _client = null;
                 }
             }
