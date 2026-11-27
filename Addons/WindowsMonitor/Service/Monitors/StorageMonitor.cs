@@ -2,187 +2,133 @@
 using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.HomeAssistant;
 using IOTLinkAPI.Platform.Windows.Native;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security;
 
 namespace IOTLinkAddon.Service.Monitors
 {
     class StorageMonitor : BaseMonitor
     {
-        private static readonly string CONFIG_KEY = "HardDrive";
+        private const string ConfigKey = "HardDrive";
+        internal const string StateTopic = "Stats/HardDrive/State";
 
         internal delegate bool ReadDiskSpace(string rootPath, out long availableFreeSpace, out long totalSize, out long totalFreeSpace);
         private readonly ReadDiskSpace _readDiskSpace;
+        private readonly Func<DriveInfo[]> _getDrives;
+        private readonly Dictionary<string, MonitorItem[]> _discovery = new();
+        private SizeFormat _format;
 
-        public StorageMonitor() : this(Kernel32.GetDiskFreeSpaceExW) { }
+        public StorageMonitor() : this(Kernel32.GetDiskFreeSpaceExW, DriveInfo.GetDrives) { }
 
-        internal StorageMonitor(ReadDiskSpace readDiskSpace)
+        internal StorageMonitor(ReadDiskSpace readDiskSpace, Func<DriveInfo[]> getDrives)
         {
             _readDiskSpace = readDiskSpace;
+            _getDrives = getDrives;
         }
 
-        public override string GetConfigKey()
+        public override string GetConfigKey() => ConfigKey;
+
+        public override void Init(MonitorSettings settings)
         {
-            return CONFIG_KEY;
+            _format = settings.DiskFormat;
+            _discovery.Clear();
         }
+
+        private IEnumerable<DriveInfo> FixedDrives() => _getDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady);
+
+        private MonitorItem[] DiscoveryFor(string letter)
+        {
+            if (_discovery.TryGetValue(letter, out var items))
+                return items;
+
+            MonitorItem Sensor(string field, string suffix, string label, string unit = null, string icon = "mdi:harddisk")
+            {
+                string id = $"{letter}_{suffix}";
+                return new MonitorItem(letter)
+                {
+                    ConfigKey = ConfigKey,
+                    Topic = StateTopic,
+                    DiscoveryKey = StateTopic + "/" + id,
+                    CreateDiscoveryOptions = _ => new HassDiscoveryOptions
+                    {
+                        Component = HomeAssistantComponent.Sensor,
+                        Id = id,
+                        Name = $"Storage {letter} - {label}",
+                        Icon = icon,
+                        Unit = unit,
+                        ValueTemplate = "{{ value_json.drives.get('" + letter + "', {}).get('" + field + "') }}"
+                    }
+                };
+            }
+
+            items = new[]
+            {
+                Sensor("totalSize", "TotalStorage", "Total Storage", _format.Unit),
+                Sensor("availableFreeSpace", "AvailableFreeSpace", "Available Free Space", _format.Unit),
+                Sensor("totalFreeSpace", "TotalFreeSpace", "Total Free Space", _format.Unit),
+                Sensor("usedSpace", "UsedSpace", "Used Space", _format.Unit),
+                Sensor("driveFormat", "DriveFormat", "Format"),
+                Sensor("driveUsage", "DriveUsage", "Usage", "%", "mdi:chart-donut"),
+                Sensor("volumeLabel", "VolumeLabel", "Label")
+            };
+            _discovery.Add(letter, items);
+            return items;
+        }
+
+        public override List<MonitorItem> GetDiscoveryItems(Configuration config, int interval) =>
+            FixedDrives().SelectMany(d => DiscoveryFor(d.Name[..1])).ToList();
 
         public override List<MonitorItem> GetMonitorItems(Configuration config, int interval)
         {
-            List<MonitorItem> result = new List<MonitorItem>();
-
-            foreach (DriveInfo driveInfo in DriveInfo.GetDrives())
+            var items = new List<MonitorItem>();
+            var drives = new SortedDictionary<string, object>(StringComparer.Ordinal);
+            foreach (var drive in FixedDrives())
             {
-                if (driveInfo == null || driveInfo.DriveType != DriveType.Fixed || !driveInfo.IsReady)
+                string letter = drive.Name[..1];
+                items.AddRange(DiscoveryFor(letter));
+                if (!_readDiskSpace(drive.Name, out long availableFreeSpace, out long totalSize, out long totalFreeSpace))
+                {
+                    var error = new Win32Exception(Marshal.GetLastWin32Error());
+                    LoggerHelper.Error("Could not read disk capacity for {0}: {1}", drive.Name, error.Message);
                     continue;
+                }
 
+                long used = totalSize - totalFreeSpace;
+                string driveFormat = null, volumeLabel = null;
                 try
                 {
-                    if (!_readDiskSpace(driveInfo.Name, out long availableFreeSpace, out long totalSize, out long totalFreeSpace))
-                    {
-                        var error = new Win32Exception(Marshal.GetLastWin32Error());
-                        LoggerHelper.Error("Could not read disk capacity for {0}: {1}", driveInfo.Name, error.Message);
-                        continue;
-                    }
-
-                    string drive = driveInfo.Name.Remove(1, 2);
-                    string topic = string.Format("Stats/HardDrive/{0}", drive);
-
-                    long usedSpace = totalSize - totalFreeSpace;
-                    int driveUsage = (int)((100.0 / totalSize) * usedSpace);
-
-                    // Total Size
-                    result.Add(new MonitorItem(drive)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_DISK_SIZE,
-                        Topic = topic + "/TotalSize",
-                        Value = totalSize,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_TotalStorage",
-                            Name = $"Storage {item.InstanceId} - Total Storage",
-                            Unit = "GB",
-                            Icon = "mdi:harddisk"
-                        }
-                    });
-
-                    // Available Free Space
-                    result.Add(new MonitorItem(drive)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_DISK_SIZE,
-                        Topic = topic + "/AvailableFreeSpace",
-                        Value = availableFreeSpace,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_AvailableFreeSpace",
-                            Name = $"Storage {item.InstanceId} - Available Free Space",
-                            Unit = "GB",
-                            Icon = "mdi:harddisk"
-                        }
-                    });
-
-                    // Total Free Space
-                    result.Add(new MonitorItem(drive)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_DISK_SIZE,
-                        Topic = topic + "/TotalFreeSpace",
-                        Value = totalFreeSpace,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_TotalFreeSpace",
-                            Name = $"Storage {item.InstanceId} - Total Free Space",
-                            Unit = "GB",
-                            Icon = "mdi:harddisk"
-                        }
-                    });
-
-                    // Used Space
-                    result.Add(new MonitorItem(drive)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_DISK_SIZE,
-                        Topic = topic + "/UsedSpace",
-                        Value = usedSpace,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_UsedSpace",
-                            Name = $"Storage {item.InstanceId} - Used Space",
-                            Unit = "GB",
-                            Icon = "mdi:harddisk"
-                        }
-                    });
-
-                    // Drive Format
-                    result.Add(new MonitorItem(drive)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_RAW,
-                        Topic = topic + "/DriveFormat",
-                        Value = driveInfo.DriveFormat,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_DriveFormat",
-                            Name = $"Storage {item.InstanceId} - Format",
-                            Icon = "mdi:harddisk"
-                        }
-                    });
-
-                    // Drive Usage
-                    result.Add(new MonitorItem(drive)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_RAW,
-                        Topic = topic + "/DriveUsage",
-                        Value = driveUsage,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_DriveUsage",
-                            Name = $"Storage {item.InstanceId} - Usage",
-                            Unit = "%",
-                            Icon = "mdi:chart-donut"
-                        }
-                    });
-
-                    // Drive Label
-                    result.Add(new MonitorItem(drive)
-                    {
-                        ConfigKey = CONFIG_KEY,
-                        Type = MonitorItemType.TYPE_RAW,
-                        Topic = topic + "/VolumeLabel",
-                        Value = driveInfo.VolumeLabel,
-                        CreateDiscoveryOptions = item => new HassDiscoveryOptions()
-                        {
-                            Component = HomeAssistantComponent.Sensor,
-                            Id = $"{item.InstanceId}_VolumeLabel",
-                            Name = $"Storage {item.InstanceId} - Label",
-                            Icon = "mdi:harddisk"
-                        }
-                    });
+                    driveFormat = drive.DriveFormat;
+                    volumeLabel = drive.VolumeLabel;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
                 {
-                    if (ex is UnauthorizedAccessException || ex is System.Security.SecurityException)
-                        LoggerHelper.Error("Access to drives not allowed. Error: {0}", ex.ToString());
-                    else if (ex is DriveNotFoundException)
-                        LoggerHelper.Error("Drive not found. Error: {0}", ex.ToString());
-                    else if (ex is IOException)
-                        LoggerHelper.Error("Drive inaccessible. Error: {0}", ex.ToString());
-                    else
-                        LoggerHelper.Error("Error while getting drive information: {0}", ex.ToString());
+                    LoggerHelper.Error("Could not read volume information for {0}: {1}", drive.Name, ex.Message);
                 }
+                drives.Add(letter, new
+                {
+                    totalSize = _format.Convert(totalSize),
+                    availableFreeSpace = _format.Convert(availableFreeSpace),
+                    totalFreeSpace = _format.Convert(totalFreeSpace),
+                    usedSpace = _format.Convert(used),
+                    driveUsage = totalSize > 0 ? (int?)((100.0 / totalSize) * used) : null,
+                    driveFormat,
+                    volumeLabel
+                });
             }
-            return result;
+            items.Add(new MonitorItem
+            {
+                ConfigKey = ConfigKey,
+                Topic = StateTopic,
+                Type = MonitorItemType.TYPE_RETAINED_STATE,
+                Value = JsonConvert.SerializeObject(new { unit = _format.Unit, drives })
+            });
+            return items;
         }
     }
 }

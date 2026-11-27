@@ -304,11 +304,6 @@ namespace IOTLinkAddon.Service
             string value = string.Empty;
             switch (item.Type)
             {
-                case MonitorItemType.TYPE_DISK_SIZE:
-                    value = settings.DiskFormat.Convert(MathHelper.ToLong(item.Value, 0L)).ToString(CultureInfo.InvariantCulture);
-                    break;
-
-
                 case MonitorItemType.TYPE_DATE:
                     value = FormatDateObject(item.Value, settings.DateFormat);
                     break;

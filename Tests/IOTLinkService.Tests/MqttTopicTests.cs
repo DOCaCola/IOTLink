@@ -28,14 +28,14 @@ namespace IOTLinkService.Tests
         {
             var topics = new AddonTopicCache();
             const string addon = "WindowsMonitor";
-            const string sensor = "Stats/HardDrive/C/AvailableFreeSpace";
-            const string expected = "windows-monitor/stats/hard-drive/c/available-free-space";
+            const string sensor = "Stats/HardDrive/State";
+            const string expected = "windows-monitor/stats/hard-drive/state";
             Assert.AreEqual(expected, topics.GetSuffix(addon, sensor));
             string known = topics.GetSuffix(addon, sensor, register: true);
             Assert.AreEqual(expected, known);
             Assert.AreSame(known, topics.GetSuffix(addon, sensor));
             Assert.AreSame(known, topics.GetSuffix(addon, sensor, register: true));
-            Assert.AreEqual("other/stats/hard-drive/c/available-free-space", topics.GetSuffix("Other", sensor));
+            Assert.AreEqual("other/stats/hard-drive/state", topics.GetSuffix("Other", sensor));
 
             for (int i = 0; i < AddonTopicCache.Capacity + 1; i++)
                 Assert.AreEqual($"windows-monitor/stats/etage_2//{i}/", topics.GetSuffix(addon, $"Stats/Étage 2//{i}/"));

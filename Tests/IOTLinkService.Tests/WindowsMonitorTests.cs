@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using IOTLinkAddon.Service;
 using IOTLinkAddon.Service.Monitors;
 using IOTLinkAPI.Addons;
@@ -125,8 +126,7 @@ namespace IOTLinkService.Tests
         public void DiskPollReadsCapacityOncePerFixedDriveAndPreservesQuotaLimitedFreeSpace()
         {
             const long gib = 1L << 30;
-            var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
-                .Select(d => d.Name).ToArray();
+            var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady).ToArray();
             Assert.IsTrue(fixedDrives.Length > 0);
             var reads = new List<string>();
             long free = 33 * gib + gib / 2;
@@ -137,24 +137,67 @@ namespace IOTLinkService.Tests
                 total = 100 * gib;
                 totalFree = free;
                 return true;
-            });
+            }, () => fixedDrives);
+            var formats = Configuration.BuildConfiguration("formats", new Dictionary<object, object> { ["diskFormat"] = "GB:1" });
+            monitor.Init(new MonitorSettings(null, formats));
+            monitor.GetDiscoveryItems(null, 10);
+            Assert.AreEqual(0, reads.Count);
 
             for (int poll = 0; poll < 2; poll++)
             {
                 reads.Clear();
-                var items = monitor.GetMonitorItems(null, 10).ToDictionary(item => item.Topic, item => item.Value);
-                CollectionAssert.AreEquivalent(fixedDrives, reads);
-                foreach (var root in fixedDrives)
+                var items = monitor.GetMonitorItems(null, 10);
+                CollectionAssert.AreEquivalent(fixedDrives.Select(d => d.Name).ToArray(), reads);
+                Assert.IsTrue(items.All(i => i.Topic == "Stats/HardDrive/State"));
+                var state = items.Single(i => i.Value != null);
+                Assert.AreEqual(MonitorItemType.TYPE_RETAINED_STATE, state.Type);
+                var snapshot = JObject.Parse((string)state.Value);
+                Assert.AreEqual("GB", (string)snapshot["unit"]);
+                var drives = (JObject)snapshot["drives"];
+                Assert.AreEqual(fixedDrives.Length, drives.Count);
+                foreach (var d in fixedDrives)
                 {
-                    string topic = $"Stats/HardDrive/{root[0]}/";
-                    Assert.AreEqual(100 * gib, items[topic + "TotalSize"]);
-                    Assert.AreEqual(7 * gib, items[topic + "AvailableFreeSpace"]);
-                    Assert.AreEqual(free, items[topic + "TotalFreeSpace"]);
-                    Assert.AreEqual(100 * gib - free, items[topic + "UsedSpace"]);
-                    Assert.AreEqual(66 - poll, items[topic + "DriveUsage"]);
+                    var row = drives[d.Name[..1]];
+                    Assert.AreEqual(100d, (double)row["totalSize"]);
+                    Assert.AreEqual(7d, (double)row["availableFreeSpace"]);
+                    Assert.AreEqual(33.5 + poll, (double)row["totalFreeSpace"]);
+                    Assert.AreEqual(66.5 - poll, (double)row["usedSpace"]);
+                    Assert.AreEqual(66 - poll, (int)row["driveUsage"]);
+                    Assert.AreEqual(d.DriveFormat, (string)row["driveFormat"]);
+                    Assert.AreEqual(d.VolumeLabel, (string)row["volumeLabel"]);
                 }
                 free += gib;
             }
+            fixedDrives = Array.Empty<DriveInfo>();
+            var empty = monitor.GetMonitorItems(null, 10).Single();
+            Assert.AreEqual(MonitorItemType.TYPE_RETAINED_STATE, empty.Type);
+            Assert.AreEqual(0, ((JObject)JObject.Parse((string)empty.Value)["drives"]).Count);
+        }
+
+        [TestMethod]
+        [Timeout(30000)]
+        public async Task DiskDiscoveryReadsEachFieldFromTheRetainedDriveSnapshot()
+        {
+            var monitor = new StorageMonitor();
+            monitor.Init(new MonitorSettings(null, null));
+            var items = monitor.GetMonitorItems(null, 10);
+            var state = items.Single(i => i.Value != null);
+            var drives = (JObject)JObject.Parse((string)state.Value)["drives"];
+            Assert.IsTrue(drives.Count > 0);
+            var entities = items.Where(i => i.CreateDiscoveryOptions != null).Select(i => i.CreateDiscoveryOptions(i)).ToDictionary(o => o.Id);
+            foreach (var letter in drives.Properties().Select(p => p.Name))
+            {
+                foreach (var (suffix, field, unit) in new[] {
+                    ("TotalStorage", "totalSize", "GB"), ("AvailableFreeSpace", "availableFreeSpace", "GB"),
+                    ("TotalFreeSpace", "totalFreeSpace", "GB"), ("UsedSpace", "usedSpace", "GB"),
+                    ("DriveUsage", "driveUsage", "%"), ("DriveFormat", "driveFormat", null), ("VolumeLabel", "volumeLabel", null) })
+                {
+                    var entity = entities[letter + "_" + suffix];
+                    Assert.AreEqual(unit, entity.Unit);
+                    Assert.AreEqual("{{ value_json.drives.get('" + letter + "', {}).get('" + field + "') }}", entity.ValueTemplate);
+                }
+            }
+            await MqttTopicTests.AssertRetainedSnapshot(items, "windows-monitor/stats/hard-drive/state", entities.Count);
         }
 
         [TestMethod]
@@ -347,7 +390,12 @@ namespace IOTLinkService.Tests
             var service = new WindowsMonitorService();
             var manager = new RecordingManager();
             var drive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory));
-            string diskTopic = $"Stats/HardDrive/{drive.Name[0]}/TotalSize";
+            void AssertDiskTotal(double total, string unit)
+            {
+                var state = JObject.Parse(manager.LastValues["Stats/HardDrive/State"]);
+                Assert.AreEqual(total, (double)state["drives"][drive.Name[..1]]["totalSize"]);
+                Assert.AreEqual(unit, (string)state["unit"]);
+            }
             const string memoryTopic = "Stats/Memory/State";
             void AssertMemoryTotal(double total, string unit)
             {
@@ -379,19 +427,19 @@ namespace IOTLinkService.Tests
                     service.Init(manager);
                     configs.SetReloadHandler(path, onReload);
                     service.Raise_OnRefreshRequested(this, EventArgs.Empty);
-                    Assert.AreEqual(drive.TotalSize.ToString(culture), manager.LastValues[diskTopic]);
+                    AssertDiskTotal(drive.TotalSize, "B");
                     AssertMemoryTotal(memory, "B");
                     Assert.AreEqual(boot.ToString("MM/dd", culture), manager.LastValues[bootTopic]);
 
                     File.WriteAllText(path, "enabled: true\nformats: { diskFormat: 'TB:2', memoryFormat: 'GB:1', dateTimeFormat: yyyyMMdd }\n" + sensors);
                     Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)));
-                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToTerabytes(drive.TotalSize), 2).ToString(culture), manager.LastValues[diskTopic]);
+                    AssertDiskTotal(Math.Round(UnitsHelper.BytesToTerabytes(drive.TotalSize), 2), "TB");
                     AssertMemoryTotal(Math.Round(UnitsHelper.BytesToGigabytes(memory), 1), "GB");
                     Assert.AreEqual(boot.ToString("yyyyMMdd", culture), manager.LastValues[bootTopic]);
 
                     File.WriteAllText(path, "enabled: true\n" + sensors);
                     Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)));
-                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToGigabytes(drive.TotalSize)).ToString(culture), manager.LastValues[diskTopic]);
+                    AssertDiskTotal(Math.Round(UnitsHelper.BytesToGigabytes(drive.TotalSize)), "GB");
                     AssertMemoryTotal(Math.Round(UnitsHelper.BytesToMegabytes(memory)), "MB");
                     Assert.AreEqual(boot.ToString("yyyy-MM-dd HH:mm:ss", culture), manager.LastValues[bootTopic]);
                 }
