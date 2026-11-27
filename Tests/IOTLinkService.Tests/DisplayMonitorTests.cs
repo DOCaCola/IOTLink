@@ -63,6 +63,34 @@ namespace IOTLinkService.Tests
         }
 
         [TestMethod]
+        public void DisplayPathValuesMapToConnectorNamesAndClockwiseDegrees()
+        {
+            Assert.AreEqual("VGA", DisplayConfiguration.GetConnectorType(0));
+            Assert.AreEqual("HDMI", DisplayConfiguration.GetConnectorType(5));
+            Assert.AreEqual("DisplayPort", DisplayConfiguration.GetConnectorType(10));
+            Assert.AreEqual("Embedded DisplayPort", DisplayConfiguration.GetConnectorType(11));
+            Assert.AreEqual("DisplayPort USB Tunnel", DisplayConfiguration.GetConnectorType(18));
+            Assert.AreEqual("Internal", DisplayConfiguration.GetConnectorType(0x80000000));
+            Assert.AreEqual("Other", DisplayConfiguration.GetConnectorType(uint.MaxValue));
+            Assert.IsNull(DisplayConfiguration.GetConnectorType(7));
+            CollectionAssert.AreEqual(new int?[] { null, 0, 90, 180, 270, null },
+                Enumerable.Range(0, 6).Select(value => DisplayConfiguration.GetRotationDegrees((uint)value)).ToArray());
+        }
+
+        [TestMethod]
+        public void MirroredConnectorsAndRotationsAreMergedIndependently()
+        {
+            var sources = new Dictionary<string, DisplayInfo>();
+            DisplayConfiguration.MergeTarget(sources, "desktop", new DisplayInfo { ConnectorType = "HDMI", Rotation = 0 });
+            DisplayConfiguration.MergeTarget(sources, "desktop", new DisplayInfo { ConnectorType = "DisplayPort", Rotation = 0 });
+            Assert.IsNull(sources["desktop"].ConnectorType);
+            Assert.AreEqual(0, sources["desktop"].Rotation);
+            DisplayConfiguration.MergeTarget(sources, "desktop", new DisplayInfo { ConnectorType = "HDMI", Rotation = 90 });
+            Assert.IsNull(sources["desktop"].ConnectorType);
+            Assert.IsNull(sources["desktop"].Rotation);
+        }
+
+        [TestMethod]
         public void MirroredTargetsPublishOnlyAgreedSignalDimensionsAndColorState()
         {
             var sources = new Dictionary<string, DisplayInfo>();
@@ -84,9 +112,10 @@ namespace IOTLinkService.Tests
         {
             var rows = new JArray(
                 new JObject { ["ScreenWidth"] = 1920, ["ScreenHeight"] = 1080, ["SignalWidth"] = 3840,
-                    ["SignalHeight"] = 2160, ["RefreshRate"] = 60000d / 1001, ["MonitorName"] = "Living Room TV", ["HdrEnabled"] = true },
+                    ["SignalHeight"] = 2160, ["RefreshRate"] = 60000d / 1001, ["MonitorName"] = "Living Room TV", ["HdrEnabled"] = true,
+                    ["Availability"] = "0", ["ConnectorType"] = "HDMI", ["Rotation"] = 90 },
                 new JObject { ["ScreenWidth"] = 1280, ["ScreenHeight"] = 720 },
-                new JObject { ["HdrEnabled"] = false });
+                new JObject { ["HdrEnabled"] = false, ["Availability"] = "1" });
             var culture = CultureInfo.CurrentCulture;
             try
             {
@@ -108,7 +137,18 @@ namespace IOTLinkService.Tests
                 Assert.AreEqual(HomeAssistantComponent.BinarySensor, discovery.Component);
                 Assert.AreEqual(discovery.PayloadOn, hdr.Value);
                 Assert.AreEqual(discovery.PayloadOff, items["Stats/Display/2/HdrEnabled"].Value);
-                foreach (string suffix in new[] { "SignalWidth", "SignalHeight", "MonitorName", "RefreshRate", "HdrEnabled" })
+                var primary = items[tv + "PrimaryDisplay"];
+                var primaryDiscovery = primary.CreateDiscoveryOptions(primary);
+                Assert.AreEqual(HomeAssistantComponent.BinarySensor, primaryDiscovery.Component);
+                Assert.AreEqual(primaryDiscovery.PayloadOff, primary.Value);
+                Assert.AreEqual(primaryDiscovery.PayloadOn, items["Stats/Display/2/PrimaryDisplay"].Value);
+                var connector = items[tv + "ConnectorType"];
+                Assert.AreEqual("HDMI", connector.Value);
+                Assert.AreEqual(HomeAssistantComponent.Sensor, connector.CreateDiscoveryOptions(connector).Component);
+                var rotation = items[tv + "Rotation"];
+                Assert.AreEqual("90", rotation.Value);
+                Assert.AreEqual("°", rotation.CreateDiscoveryOptions(rotation).Unit);
+                foreach (string suffix in new[] { "SignalWidth", "SignalHeight", "MonitorName", "RefreshRate", "HdrEnabled", "PrimaryDisplay", "ConnectorType", "Rotation" })
                     Assert.AreEqual("None", items[legacy + suffix].Value);
             }
             finally { CultureInfo.CurrentCulture = culture; }

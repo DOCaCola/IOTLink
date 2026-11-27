@@ -167,6 +167,54 @@ namespace IOTLinkAddon.Service.Monitors
                         Icon = "mdi:hdr"
                     }
                 });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/PrimaryDisplay",
+                    Value = displayInfo.IsPrimaryDisplay()?.ToString() ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_PrimaryDisplay",
+                        Name = $"Screen #{item.InstanceId} - Primary Display",
+                        Component = HomeAssistantComponent.BinarySensor,
+                        PayloadOn = "True",
+                        PayloadOff = "False",
+                        Icon = "mdi:monitor-star"
+                    }
+                });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/ConnectorType",
+                    Value = displayInfo.ConnectorType ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_ConnectorType",
+                        Name = $"Screen #{item.InstanceId} - Connector Type",
+                        Component = HomeAssistantComponent.Sensor,
+                        Icon = "mdi:connection"
+                    }
+                });
+
+                result.Add(new MonitorItem(index)
+                {
+                    ConfigKey = CONFIG_KEY_INFO,
+                    Type = MonitorItemType.TYPE_RAW,
+                    Topic = topic + "/Rotation",
+                    Value = displayInfo.Rotation?.ToString(CultureInfo.InvariantCulture) ?? "None",
+                    CreateDiscoveryOptions = item => new HassDiscoveryOptions
+                    {
+                        Id = $"Screen_{item.InstanceId}_Rotation",
+                        Name = $"Screen #{item.InstanceId} - Rotation",
+                        Component = HomeAssistantComponent.Sensor,
+                        Unit = "°",
+                        Icon = "mdi:screen-rotation"
+                    }
+                });
             }
 
             return result;

@@ -51,6 +51,8 @@ namespace IOTLinkAPI.Platform.Windows
                         ScreenWidth = desktop.DesktopWidth,
                         ScreenHeight = desktop.DesktopHeight,
                         MonitorName = string.IsNullOrWhiteSpace(name) ? null : name,
+                        ConnectorType = GetConnectorType(path.Target.OutputTechnology),
+                        Rotation = GetRotationDegrees(path.Target.Rotation),
                         RefreshRate = rate.Hertz,
                         HdrEnabled = hdr,
                         SignalWidth = signal.ActiveWidth == 0 ? (uint?)null : signal.ActiveWidth,
@@ -88,12 +90,49 @@ namespace IOTLinkAPI.Platform.Windows
             return index < count ? modes[index] : default;
         }
 
+        internal static int? GetRotationDegrees(uint rotation)
+        {
+            // DISPLAYCONFIG_ROTATION ranges from identity (1) to 270 degrees clockwise (4).
+            return rotation >= 1 && rotation <= 4 ? ((int)rotation - 1) * 90 : (int?)null;
+        }
+
+        internal static string GetConnectorType(uint technology)
+        {
+            // DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY from wingdi.h.
+            switch (technology)
+            {
+                case 0: return "VGA";
+                case 1: return "S-Video";
+                case 2: return "Composite";
+                case 3: return "Component";
+                case 4: return "DVI";
+                case 5: return "HDMI";
+                case 6: return "LVDS";
+                case 8: return "D-Terminal";
+                case 9: return "SDI";
+                case 10: return "DisplayPort";
+                case 11: return "Embedded DisplayPort";
+                case 12: return "UDI";
+                case 13: return "Embedded UDI";
+                case 14: return "SDTV Dongle";
+                case 15: return "Miracast";
+                case 16: return "Indirect Wired";
+                case 17: return "Indirect Virtual";
+                case 18: return "DisplayPort USB Tunnel";
+                case 0x80000000: return "Internal";
+                case uint.MaxValue: return "Other";
+                default: return null;
+            }
+        }
+
         internal static void MergeTarget(Dictionary<string, DisplayInfo> modes, string source, DisplayInfo target)
         {
             // A mirrored desktop has one GDI monitor but can drive targets with different modes.
             if (modes.TryGetValue(source, out var previous))
             {
                 if (previous.MonitorName != target.MonitorName) previous.MonitorName = null;
+                if (previous.ConnectorType != target.ConnectorType) previous.ConnectorType = null;
+                if (previous.Rotation != target.Rotation) previous.Rotation = null;
                 if (previous.RefreshRate != target.RefreshRate) previous.RefreshRate = null;
                 if (previous.HdrEnabled != target.HdrEnabled) previous.HdrEnabled = null;
                 if (previous.SignalWidth != target.SignalWidth || previous.SignalHeight != target.SignalHeight)

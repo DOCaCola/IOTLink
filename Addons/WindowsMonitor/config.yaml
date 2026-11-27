@@ -53,7 +53,8 @@ formats:
 # SystemInfo        : System Info (Current user physically logged in).
 # IdleTime          : Idle Time (Current user physically logged in).
 # Uptime            : Uptime information (Boot time, Uptime).
-# Display-Info      : Desktop and active signal dimensions, monitor name, refresh rate (Hz), and active HDR state per display.
+# Display-Info      : Desktop and signal dimensions, monitor name, refresh rate (Hz), HDR state,
+#                     primary display flag, connector type, and clockwise rotation (degrees) per display.
 # Display-Screenshot: Screenshot (Per Display) - Recommended > 60 secs.
 ############################################################################
 monitors:
