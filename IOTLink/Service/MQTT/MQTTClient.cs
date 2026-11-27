@@ -23,6 +23,25 @@ namespace IOTLinkService.Service.MQTT
         private string _machineTopicPrefix;
         private string _globalTopicPrefix;
         private string _lastWillTopic;
+        private DiscoveryIdentity _discoveryIdentity;
+
+        private sealed class DiscoveryIdentity
+        {
+            public string MachineName { get; }
+            public string MachineId { get; }
+            public string EntityIdPrefix { get; }
+            public string Domain { get; }
+            public string Manufacturer { get; }
+
+            public DiscoveryIdentity(bool domainPrefix)
+            {
+                MachineName = Environment.MachineName;
+                Domain = Environment.UserDomainName;
+                MachineId = MachineName.Replace(" ", "_");
+                EntityIdPrefix = domainPrefix && Domain != MachineName ? $"{Domain} {MachineName}" : MachineName;
+                Manufacturer = "IOTLink " + AssemblyHelper.GetCurrentVersion();
+            }
+        }
 
         private IManagedMqttClient _client;
         private IMqttClientOptions _options;
@@ -114,6 +133,7 @@ namespace IOTLinkService.Service.MQTT
             _machineTopicPrefix = MQTTHelper.GetFullTopicName(_config.Prefix);
             _globalTopicPrefix = MQTTHelper.GetGlobalTopicName(_config.GlobalPrefix);
             _lastWillTopic = _machineTopicPrefix + "lwt";
+            _discoveryIdentity = _config.Discovery?.Enabled == true ? new DiscoveryIdentity(_config.Discovery.DomainPrefix) : null;
 
             // LWT
             if (_config.LWT != null && _config.LWT.Enabled)
@@ -300,24 +320,17 @@ namespace IOTLinkService.Service.MQTT
                 return;
             }
 
-            if (!_config.Discovery.Enabled)
+            if (_discoveryIdentity == null)
             {
                 LoggerHelper.Verbose("MQTTClient::PublishDiscoveryMessage() - MQTT Discovery Disabled");
                 return;
             }
 
             var topic = MQTTHelper.AppendTopic(_machineTopicPrefix, stateTopic);
-            var machineName = Environment.MachineName;
-            var machineFullName = PlatformHelper.GetFullMachineName().Replace("\\", " ");
-
-            if (!_config.Discovery.DomainPrefix)
-                machineFullName = machineName;
-
-            var machineId = machineName.Replace(" ", "_");
-            var uniqueId = string.Format("{0}_{1}_{2}", machineFullName, preffixName, discoveryOptions.Id).Replace(" ", "_").ToLower();
+            var uniqueId = string.Format("{0}_{1}_{2}", _discoveryIdentity.EntityIdPrefix, preffixName, discoveryOptions.Id).Replace(" ", "_").ToLower();
             var discoveryJson = new HassDiscoveryJsonClass()
             {
-                Name = string.Format("{0} {1}", machineName, discoveryOptions.Name),
+                Name = string.Format("{0} {1}", _discoveryIdentity.MachineName, discoveryOptions.Name),
                 UniqueId = uniqueId,
                 AvailabilityTopic = _lastWillTopic,
                 PayloadAvailable = "ON",
@@ -351,11 +364,11 @@ namespace IOTLinkService.Service.MQTT
             {
                 Identifiers = new string[1]
                 {
-                    string.Format("{0}_{1}", machineId, preffixName)
+                    string.Format("{0}_{1}", _discoveryIdentity.MachineId, preffixName)
                 },
-                Manufacturer = "IOTLink " + AssemblyHelper.GetCurrentVersion(),
-                Model = Environment.UserDomainName,
-                Name = string.Format("{0} {1}", machineName, preffixName),
+                Manufacturer = _discoveryIdentity.Manufacturer,
+                Model = _discoveryIdentity.Domain,
+                Name = string.Format("{0} {1}", _discoveryIdentity.MachineName, preffixName),
             };
 
             var componentTopic = discoveryOptions.Component.ToString().PascalToSnakeCase();
