@@ -34,6 +34,26 @@ namespace IOTLinkAddon.Service
 
         private string _configPath;
         private Configuration _config;
+        private Configuration _globalFormats;
+
+        private readonly struct SizeFormat
+        {
+            private readonly string _unit;
+            private readonly int _roundDigits;
+
+            public SizeFormat(string format)
+            {
+                string[] parts = format.Split(':');
+                _unit = parts[0];
+                _roundDigits = parts.Length > 1 ? MathHelper.ToInteger(parts[1]) : 0;
+            }
+
+            public string Format(object value)
+            {
+                double size = UnitsHelper.ConvertSize(MathHelper.ToLong(value, 0L), _unit);
+                return Math.Round(size, _roundDigits).ToString(CultureInfo.InvariantCulture);
+            }
+        }
 
         private sealed class MonitorSettings
         {
@@ -42,12 +62,34 @@ namespace IOTLinkAddon.Service
             public int Interval { get; }
             public bool Cacheable { get; }
 
-            public MonitorSettings(Configuration config)
+            public SizeFormat DiskFormat { get; }
+            public SizeFormat MemoryFormat { get; }
+            public string DateFormat { get; }
+            public string TimeFormat { get; }
+            public string DateTimeFormat { get; }
+
+            public MonitorSettings(Configuration config, Configuration globalFormats)
             {
                 Config = config;
                 Enabled = config?.GetValue("enabled", false) ?? false;
                 Interval = config?.GetValue("interval", DEFAULT_INTERVAL) ?? DEFAULT_INTERVAL;
                 Cacheable = config?.GetValue("cacheable", false) ?? false;
+
+                var formats = config?.GetValue("formats");
+                string ResolveFormat(string key, string defaultValue)
+                {
+                    string value = formats?.GetValue(key, null);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        return value;
+
+                    return globalFormats?.GetValue(key, defaultValue) ?? defaultValue;
+                }
+
+                DiskFormat = new SizeFormat(ResolveFormat("diskFormat", DEFAULT_FORMAT_DISK_SIZE));
+                MemoryFormat = new SizeFormat(ResolveFormat("memoryFormat", DEFAULT_FORMAT_MEMORY_SIZE));
+                DateFormat = ResolveFormat("dateFormat", DEFAULT_FORMAT_DATE);
+                TimeFormat = ResolveFormat("timeFormat", DEFAULT_FORMAT_TIME);
+                DateTimeFormat = ResolveFormat("dateTimeFormat", DEFAULT_FORMAT_DATETIME);
             }
 
             public bool IsDue(uint counter) => Enabled && counter % Interval == 0;
@@ -95,6 +137,7 @@ namespace IOTLinkAddon.Service
         private void ApplyConfiguration(Configuration config, bool sendValues)
         {
             _config = config;
+            _globalFormats = config?.GetValue("formats");
             _monitorSettings.Clear();
             _enabled = config != null && config.GetValue("enabled", false);
             foreach (IMonitor monitor in monitors)
@@ -286,7 +329,7 @@ namespace IOTLinkAddon.Service
                     foreach (MonitorItem item in items)
                     {
                         PublishDiscoveryItem(item);
-                        PublishItem(item, settings.Cacheable);
+                        PublishItem(item, settings);
                     }
                 }
             }
@@ -296,7 +339,7 @@ namespace IOTLinkAddon.Service
             }
         }
 
-        private void PublishItem(MonitorItem item, bool cacheable)
+        private void PublishItem(MonitorItem item, MonitorSettings settings)
         {
             if (item == null || item.Value == null || string.IsNullOrWhiteSpace(item.Topic))
                 return;
@@ -305,11 +348,11 @@ namespace IOTLinkAddon.Service
             switch (item.Type)
             {
                 case MonitorItemType.TYPE_DISK_SIZE:
-                    value = FormatSizeObject(item.ConfigKey, "diskFormat", DEFAULT_FORMAT_DISK_SIZE, item.Value);
+                    value = settings.DiskFormat.Format(item.Value);
                     break;
 
                 case MonitorItemType.TYPE_MEMORY_SIZE:
-                    value = FormatSizeObject(item.ConfigKey, "memoryFormat", DEFAULT_FORMAT_MEMORY_SIZE, item.Value);
+                    value = settings.MemoryFormat.Format(item.Value);
                     break;
 
                 case MonitorItemType.TYPE_NETWORK_SPEED:
@@ -318,13 +361,13 @@ namespace IOTLinkAddon.Service
                     break;
 
                 case MonitorItemType.TYPE_DATE:
-                    value = FormatDateObject(item.Value, GetMonitorFormat(item.ConfigKey, "dateFormat", DEFAULT_FORMAT_DATE));
+                    value = FormatDateObject(item.Value, settings.DateFormat);
                     break;
                 case MonitorItemType.TYPE_TIME:
-                    value = FormatDateObject(item.Value, GetMonitorFormat(item.ConfigKey, "timeFormat", DEFAULT_FORMAT_TIME));
+                    value = FormatDateObject(item.Value, settings.TimeFormat);
                     break;
                 case MonitorItemType.TYPE_DATETIME:
-                    value = FormatDateObject(item.Value, GetMonitorFormat(item.ConfigKey, "dateTimeFormat", DEFAULT_FORMAT_DATETIME));
+                    value = FormatDateObject(item.Value, settings.DateTimeFormat);
                     break;
 
                 case MonitorItemType.TYPE_UPTIME:
@@ -342,7 +385,7 @@ namespace IOTLinkAddon.Service
                     return;
             }
 
-            SendMonitorValue(item.Topic, value, cacheable);
+            SendMonitorValue(item.Topic, value, settings.Cacheable);
         }
 
         private void PublishDiscoveryItem(MonitorItem item)
@@ -360,18 +403,6 @@ namespace IOTLinkAddon.Service
 
             GetManager().PublishDiscoveryMessage(this, item.Topic, item.ConfigKey, item.DiscoveryOptions); //TODO: name should be combination of configkey and discoveryOptions.name
             _discoveryItems.Add(item.Topic);
-        }
-
-        private string FormatSizeObject(string configKey, string formatKey, string defaultFormat, object value)
-        {
-            long sizeInBytes = MathHelper.ToLong(value, 0L);
-            string formatStr = GetMonitorFormat(configKey, formatKey, defaultFormat);
-
-            string format = formatStr.Contains(":") ? formatStr.Split(':')[0] : formatStr;
-            int roundDigits = formatStr.Contains(":") ? MathHelper.ToInteger(formatStr.Split(':')[1]) : 0;
-
-            double size = UnitsHelper.ConvertSize(sizeInBytes, format);
-            return Math.Round(size, roundDigits).ToString(CultureInfo.InvariantCulture);
         }
 
         private string FormatDateObject(object value, string format)
@@ -419,7 +450,7 @@ namespace IOTLinkAddon.Service
                 foreach (MonitorItem item in items)
                 {
                     PublishDiscoveryItem(item);
-                    PublishItem(item, settings.Cacheable);
+                    PublishItem(item, settings);
                 }
             }
         }
@@ -428,23 +459,11 @@ namespace IOTLinkAddon.Service
         {
             if (!_monitorSettings.TryGetValue(configKey, out var settings))
             {
-                settings = new MonitorSettings(_config.GetValue($"monitors:{configKey}"));
+                settings = new MonitorSettings(_config.GetValue($"monitors:{configKey}"), _globalFormats);
                 _monitorSettings.Add(configKey, settings);
             }
 
             return settings;
-        }
-
-        private string GetMonitorFormat(string configKey, string formatKey, string defaultValue)
-        {
-            if (string.IsNullOrWhiteSpace(configKey) || string.IsNullOrWhiteSpace(formatKey))
-                return defaultValue;
-
-            string value = _config.GetValue($"monitors:{configKey}:formats:{formatKey}", null);
-            if (string.IsNullOrWhiteSpace(value))
-                value = _config.GetValue($"formats:{formatKey}", defaultValue);
-
-            return value;
         }
 
         private string GetDiscoveryOption(string configKey, string subKey, string option, string defaultValue)

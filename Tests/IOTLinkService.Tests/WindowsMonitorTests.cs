@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Concurrent;
 using System.Dynamic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using IOTLinkAddon.Service;
 using IOTLinkAPI.Addons;
 using IOTLinkAPI.Configs;
+using IOTLinkAPI.Helpers;
 using IOTLinkAPI.Platform.Events;
 using IOTLinkAPI.Platform.Events.MQTT;
 using IOTLinkAPI.Platform.HomeAssistant;
@@ -112,6 +114,64 @@ namespace IOTLinkService.Tests
             }
         }
 
+        [TestMethod]
+        public void ReloadUsesNewGlobalFormatsWhenSensorOverridesAreRemoved()
+        {
+            string directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))).FullName;
+            string path = Path.Combine(directory, "config.yaml");
+            var service = new WindowsMonitorService();
+            var manager = new RecordingManager();
+            var drive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory));
+            string diskTopic = $"Stats/HardDrive/{drive.Name[0]}/TotalSize";
+            const string memoryTopic = "Stats/Memory/Total";
+            const string bootTopic = "Stats/System/BootTime";
+            const string sensors = "monitors:\n" +
+                "  HardDrive: { enabled: true, interval: 1 }\n" +
+                "  Memory: { enabled: true, interval: 1 }\n" +
+                "  Uptime: { enabled: true, interval: 1 }\n";
+            var culture = CultureInfo.InvariantCulture;
+            long memory = (long)PlatformHelper.GetMemoryInformation().TotalPhysical;
+            var boot = PlatformHelper.LastBootUpTime();
+            var configs = ConfigurationManager.GetInstance();
+            using (var reload = new AutoResetEvent(false))
+            {
+                ConfigurationManager.ConfigReloadedHandler onReload = (sender, args) => reload.Set();
+                try
+                {
+                    File.WriteAllText(path, "enabled: true\nformats: { diskFormat: TB, memoryFormat: TB, dateTimeFormat: yyyy }\n" +
+                        "monitors:\n  HardDrive: { enabled: true, formats: { diskFormat: B } }\n" +
+                        "  Memory: { enabled: true, formats: { memoryFormat: B } }\n" +
+                        "  Uptime: { enabled: true, formats: { dateTimeFormat: MM/dd } }\n");
+                    service.SetCurrentPath(directory);
+                    service.SetAddonInfo(new AddonInfo { AddonId = "WindowsMonitor" });
+                    service.Init(manager);
+                    configs.SetReloadHandler(path, onReload);
+                    service.Raise_OnRefreshRequested(this, EventArgs.Empty);
+                    Assert.AreEqual(drive.TotalSize.ToString(culture), manager.LastValues[diskTopic]);
+                    Assert.AreEqual(memory.ToString(culture), manager.LastValues[memoryTopic]);
+                    Assert.AreEqual(boot.ToString("MM/dd", culture), manager.LastValues[bootTopic]);
+
+                    File.WriteAllText(path, "enabled: true\nformats: { diskFormat: 'TB:2', memoryFormat: 'GB:1', dateTimeFormat: yyyyMMdd }\n" + sensors);
+                    Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)));
+                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToTerabytes(drive.TotalSize), 2).ToString(culture), manager.LastValues[diskTopic]);
+                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToGigabytes(memory), 1).ToString(culture), manager.LastValues[memoryTopic]);
+                    Assert.AreEqual(boot.ToString("yyyyMMdd", culture), manager.LastValues[bootTopic]);
+
+                    File.WriteAllText(path, "enabled: true\n" + sensors);
+                    Assert.IsTrue(reload.WaitOne(TimeSpan.FromSeconds(15)));
+                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToGigabytes(drive.TotalSize)).ToString(culture), manager.LastValues[diskTopic]);
+                    Assert.AreEqual(Math.Round(UnitsHelper.BytesToMegabytes(memory)).ToString(culture), manager.LastValues[memoryTopic]);
+                    Assert.AreEqual(boot.ToString("yyyy-MM-dd HH:mm:ss", culture), manager.LastValues[bootTopic]);
+                }
+                finally
+                {
+                    service.Raise_OnMQTTDisconnected(this, null);
+                    configs.RemoveReloadHandler(path, onReload);
+                    Directory.Delete(directory, true);
+                }
+            }
+        }
+
         private static void WriteConfig(string path, bool enabled)
         {
             File.WriteAllText(path, "enabled: " + (enabled ? "true" : "false") +
@@ -134,11 +194,16 @@ namespace IOTLinkService.Tests
         private sealed class RecordingManager : IAddonServiceManager
         {
             public int Discoveries, Values;
+            public readonly ConcurrentDictionary<string, string> LastValues = new ConcurrentDictionary<string, string>();
             public readonly ConcurrentQueue<int> Requests = new ConcurrentQueue<int>();
             public int Total => Volatile.Read(ref Discoveries) + Volatile.Read(ref Values) + Requests.Count;
 
             public void PublishDiscoveryMessage(ServiceAddon sender, string topic, string prefix, HassDiscoveryOptions options) => Interlocked.Increment(ref Discoveries);
-            public void PublishMessage(ServiceAddon sender, string topic, string message) => Interlocked.Increment(ref Values);
+            public void PublishMessage(ServiceAddon sender, string topic, string message)
+            {
+                LastValues[topic] = message;
+                Interlocked.Increment(ref Values);
+            }
             public void PublishMessage(ServiceAddon sender, string topic, byte[] message) => Interlocked.Increment(ref Values);
             public void SendAgentRequest(ServiceAddon sender, dynamic addonData, string username = null) => Requests.Enqueue((int)addonData.requestType);
             public void SubscribeTopic(ServiceAddon sender, string topic, MQTTHandlers.MQTTMessageEventHandler handler, bool acceptGlobals = true) => throw new NotSupportedException();
